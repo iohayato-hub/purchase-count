@@ -81,7 +81,7 @@
       </button>
 
       <button onclick="openImporterModal()" class="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-[10px] font-bold active:scale-95 flex items-center gap-1">
-        <span>PL取込</span>
+        <span>PL取込ガイド</span>
       </button>
 
       <button id="btn-pending-queue" onclick="openPendingQueueModal()" class="hidden relative px-2 py-1 rounded-lg bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-bold active:scale-95">
@@ -128,7 +128,7 @@
             <button type="button" onclick="refreshPLDataFromGas(false)" id="btn-card-pl-refresh" class="px-2 py-1 bg-sky-100 hover:bg-sky-200 border border-sky-300 text-sky-800 text-[10px] font-bold rounded-lg flex items-center gap-1 active:scale-95 transition-all">
               <span>⟳ PL反映</span>
             </button>
-            <button type="button" onclick="confirmPurgeAllPL()" id="btn-card-pl-purge" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-800 text-[10px] font-bold rounded-lg flex items-center gap-1 active:scale-95 transition-all" title="取り込んだすべてのPLデータを削除します">
+            <button type="button" onclick="confirmPurgeAllPL()" id="btn-card-pl-purge" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-800 text-[10px] font-bold rounded-lg flex items-center gap-1 active:scale-95 transition-all" title="すべてのPLデータを完全削除します">
               <span>🗑️ PLデータ全削除</span>
             </button>
           </div>
@@ -230,7 +230,7 @@
     </div>
   </main>
 
-  <!-- MODAL: 差異・例外報告フォーム (課題A: 未登録商品手入力セクション統合) -->
+  <!-- MODAL: 差異・例外報告フォーム -->
   <div id="modal-exception" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 hidden">
     <div class="bg-white border border-amber-300 rounded-3xl p-4 sm:p-5 max-w-md w-full shadow-2xl max-h-[92vh] flex flex-col">
       <div class="flex items-center justify-between pb-3 border-b border-slate-200">
@@ -244,6 +244,7 @@
         <button onclick="closeDiscrepancyModal()" class="text-slate-400 hover:text-slate-700 text-lg p-1">✕</button>
       </div>
 
+      <!-- どの商品に対する差異か一目でわかる固定ヘッダー -->
       <div class="py-2.5 px-3 bg-slate-50 rounded-xl border border-slate-200 mt-3 text-xs">
         <div class="text-[11px] text-slate-500 font-mono" id="disc-modal-code"></div>
         <div class="text-sm font-bold text-slate-900 truncate" id="disc-modal-title"></div>
@@ -311,22 +312,30 @@
     </div>
   </div>
 
-  <!-- MODAL: PL取り込み -->
+  <!-- MODAL: PL取り込み ＆ 列解説ガイド付き -->
   <div id="modal-importer" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 hidden">
     <div class="bg-white border border-slate-200 rounded-3xl p-5 max-w-lg w-full shadow-2xl max-h-[90vh] overflow-y-auto">
       <div class="flex items-center justify-between pb-2 border-b border-slate-200 mb-3">
         <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2">
           <span>📊</span>
-          <span>PL事前取り込み（Excelコピペ一括解析）</span>
+          <span>PL事前取り込みガイド & コピペ解析</span>
         </h3>
         <button onclick="closeImporterModal()" class="text-slate-400 text-sm">✕</button>
       </div>
 
-      <p class="text-xs text-slate-600 mb-2">
-        メキシコから届いたExcelのセル範囲をコピーして貼り付けてください。
-      </p>
+      <!-- 作業シンプル化のための列説明ガイド -->
+      <div class="p-3 bg-sky-50 border border-sky-200 rounded-2xl mb-3 text-xs text-sky-900 space-y-1">
+        <div class="font-bold flex items-center gap-1">
+          <span>💡</span>
+          <span>「PL取込」シートのコピペ列ガイド（左から順）</span>
+        </div>
+        <p class="text-[11px] text-sky-800 leading-relaxed">
+          Excelからデータを貼り付ける際は、以下の並びになるようにコピーしてください。<br>
+          <strong>A列:</strong> 商品コード / <strong>B列:</strong> PL番号・ID / <strong>C列:</strong> Item / <strong>D列:</strong> Description / <strong>E列:</strong> Color / <strong>F列:</strong> S(サイズ) / <strong>G列:</strong> Pallet / <strong>H列:</strong> Carton / <strong>I列:</strong> Qty(予定数量)
+        </p>
+      </div>
 
-      <textarea id="importer-textarea" rows="6" placeholder="Excelからコピーしたデータをここに貼り付け" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-mono text-slate-800 mb-3 focus:outline-none focus:border-amber-500"></textarea>
+      <textarea id="importer-textarea" rows="5" placeholder="Excelからコピーしたセル範囲をここに貼り付け" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-mono text-slate-800 mb-3 focus:outline-none focus:border-amber-500"></textarea>
 
       <div class="flex gap-2 mb-3">
         <button onclick="clearImporterText()" class="px-3 py-2 bg-slate-100 text-slate-600 text-xs font-bold rounded-xl border border-slate-300">クリア</button>
@@ -398,7 +407,6 @@
       currentInspectionItems: [],
       plKeypadBuffer: '',
       targetItemIndex: -1,
-      manualQtyBuffer: '0',
       activeDiscrepancies: [],
       activeDiscrepancyRowIndex: -1,
       pendingQueue: JSON.parse(localStorage.getItem('inspection_pending_queue') || '[]'),
@@ -425,7 +433,6 @@
         state.isOnline = true;
         document.getElementById('offline-banner').classList.add('hidden');
         showToast('オンラインに復帰しました');
-        // キューにデータがあれば自動再送試行
         if (state.pendingQueue.length > 0) processPendingQueueSilently();
       });
       window.addEventListener('offline', () => {
@@ -965,9 +972,12 @@
         row.targetItemCode = '';
         row.targetItemName = '';
         row.targetSize = '';
+        renderDiscrepancyRows();
+        updateDiscrepancyCalculations();
+      } else {
+        // 「サイズ違い」または「商品違い」を選んだ場合は即座にマスタ検索を立ち上げる
+        openSearchMasterModal(rIdx);
       }
-      renderDiscrepancyRows();
-      updateDiscrepancyCalculations();
     }
 
     function onDiscrepancyQtyChange(rIdx, val) {
@@ -1304,6 +1314,7 @@
         });
         renderPLDashboard();
         showToast('PLデータを取り込みました');
+        closeImporterModal();
       }
     }
 
