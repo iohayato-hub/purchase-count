@@ -37,7 +37,7 @@
       animation: pulse-subtle 2s infinite ease-in-out;
     }
   </style>
-<script src="/_aistudio-iframe.js?v=1f94f900"></script></head>
+</head>
 <body class="bg-slate-50 text-slate-900 min-h-screen flex flex-col font-sans antialiased overflow-x-hidden">
 
   <!-- ========================================================
@@ -964,10 +964,12 @@
       updateDiscrepancyCalculations();
     }
 
+    // 要望対応: サイズ違い・商品違いを選択した瞬間に商品検索を即座に立ち上げる
     function onDiscrepancyReasonChange(rIdx, newReason) {
       const row = state.activeDiscrepancies[rIdx];
       if (!row) return;
       row.reason = newReason;
+      
       if (newReason === '数量過不足') {
         row.targetItemCode = '';
         row.targetItemName = '';
@@ -975,7 +977,6 @@
         renderDiscrepancyRows();
         updateDiscrepancyCalculations();
       } else {
-        // 「サイズ違い」または「商品違い」を選んだ場合は即座にマスタ検索を立ち上げる
         openSearchMasterModal(rIdx);
       }
     }
@@ -996,6 +997,7 @@
     function renderDiscrepancyRows() {
       const container = document.getElementById('discrepancy-rows-container');
       container.innerHTML = '';
+      const parentItem = state.currentInspectionItems[state.targetItemIndex];
 
       state.activeDiscrepancies.forEach((disc, rIdx) => {
         const card = document.createElement('div');
@@ -1004,6 +1006,14 @@
         let detailHtml = '';
         if (disc.reason === '数量過不足') {
           detailHtml = `
+            <div class="p-2.5 bg-white rounded-xl border border-slate-200 mb-2 flex items-center justify-between text-xs">
+              <div>
+                <span class="text-[10px] text-slate-500 block">対象PL商品詳細</span>
+                <span class="font-bold text-slate-900">${parentItem ? parentItem.jpDesign : ''}</span>
+                <span class="text-slate-600 ml-1">(${parentItem ? parentItem.jpColor : ''} / ${parentItem ? parentItem.jpSize : ''})</span>
+              </div>
+              <span class="font-mono text-xs font-bold text-slate-700">${parentItem ? parentItem.itemCode : ''}</span>
+            </div>
             <div>
               <label class="block text-xs text-slate-700 font-bold mb-1">実数</label>
               <input type="number" inputmode="numeric" value="${disc.qty !== '' ? disc.qty : ''}" placeholder="実際の数量" oninput="onDiscrepancyQtyChange(${rIdx}, this.value)" class="w-full bg-white border border-amber-400 rounded-xl px-3 py-2 text-sm font-bold font-mono text-slate-900">
@@ -1015,7 +1025,7 @@
           `;
         } else {
           const isSize = disc.reason === 'サイズ違い';
-          const labelText = isSize ? '正しいサイズ・商品を選択' : '混入した別商品を選択';
+          const labelText = isSize ? '選択中の正しいサイズ・商品詳細' : '選択中の混入した別商品詳細';
           detailHtml = `
             <div>
               <label class="block text-xs text-purple-800 font-bold mb-1">${labelText}</label>
@@ -1025,17 +1035,17 @@
                     <div class="font-bold text-slate-900">${disc.targetItemName}</div>
                     <div class="text-[11px] text-purple-700 font-mono">${disc.targetItemCode} · ${disc.targetSize}</div>
                   </div>
-                  <button type="button" onclick="openSearchMasterModal(${rIdx})" class="px-2 py-1 bg-purple-600 text-white text-[10px] font-bold rounded-lg shrink-0">変更</button>
+                  <button type="button" onclick="openSearchMasterModal(${rIdx})" class="px-2.5 py-1 bg-purple-600 text-white text-[10px] font-bold rounded-lg shrink-0">変更する</button>
                 </div>
               ` : `
                 <button type="button" onclick="openSearchMasterModal(${rIdx})" class="w-full py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-800 text-xs font-bold rounded-xl border border-dashed border-purple-300 flex items-center justify-center gap-1">
-                  <span>🔍 商品マスタ検索・新規登録</span>
+                  <span>🔍 【必須】商品マスタを検索して選択する</span>
                 </button>
               `}
             </div>
             <div>
               <label class="block text-xs text-slate-700 font-bold mb-1">該当数量（点）</label>
-              <input type="number" inputmode="numeric" value="${disc.qty !== '' ? disc.qty : ''}" placeholder="点数" oninput="onDiscrepancyQtyChange(${rIdx}, this.value)" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm font-bold font-mono text-slate-900">
+              <input type="number" inputmode="numeric" value="${disc.qty !== '' ? disc.qty : ''}" placeholder="点数を入力" oninput="onDiscrepancyQtyChange(${rIdx}, this.value)" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm font-bold font-mono text-slate-900">
             </div>
             <div>
               <label class="block text-[11px] text-slate-500 mb-1">理由</label>
@@ -1139,6 +1149,7 @@
       document.getElementById('modal-search-master').classList.add('hidden');
     }
 
+    // 検索時も必ず商品名・カラー・サイズを明確に表示
     function filterMasterSearch(query) {
       const q = (query || '').toLowerCase().trim();
       const container = document.getElementById('master-search-results');
@@ -1158,9 +1169,13 @@
         itemCard.innerHTML = `
           <div class="flex items-center justify-between text-xs font-bold text-slate-900">
             <span class="truncate">${m.jpDesign}</span>
-            <span class="text-amber-700 font-mono text-xs">${m.jpSize || ''}</span>
+            <span class="text-amber-800 font-extrabold text-xs">サイズ: ${m.jpSize || 'FREE'}</span>
           </div>
-          <div class="text-[11px] text-slate-500 font-mono">${m.itemCode}</div>
+          <div class="text-[11px] text-slate-600 flex items-center gap-2">
+            <span>色: ${m.jpColor || 'なし'}</span>
+            <span>·</span>
+            <span class="font-mono">${m.itemCode}</span>
+          </div>
         `;
         container.appendChild(itemCard);
       });
@@ -1198,7 +1213,8 @@
         row.innerHTML = `
           <div class="flex-1 min-w-0 pr-2">
             <div class="font-bold text-slate-900 text-sm truncate">${it.jpDesign}</div>
-            <div class="text-[11px] text-slate-500 font-mono">${it.itemCode} · ${it.jpSize}</div>
+            <div class="text-[11px] text-slate-600 font-medium">色: ${it.jpColor || 'なし'} · サイズ: <strong class="text-amber-800">${it.jpSize}</strong></div>
+            <div class="text-[10px] text-slate-400 font-mono">${it.itemCode}</div>
             ${it.hasException && it.exceptionNote ? `<div class="text-[11px] text-amber-800 font-bold mt-0.5 truncate">⚠️ ${it.exceptionNote}</div>` : ''}
           </div>
           <div class="text-right shrink-0">
