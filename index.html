@@ -1,801 +1,1376 @@
-/**
- * ==========================================================================
- * 仕入カウント確認報告 - Google Apps Script (GAS) バックエンド完全版
- * 構成: 商品マスタ / PL取込 / 仕入カウント / 仕入カウント差異確認
- * ==========================================================================
- */
-const SHEET_NAMES = { 
-  MASTER: '商品マスタ', 
-  PL_IMPORT: 'PL取込', 
-  COUNT: '仕入カウント', 
-  DIFF_CHECK: '仕入カウント差異確認' 
-};
-
-/**
- * スプレッドシート起動時にカスタムメニューを追加
- */
-function onOpen() {
-  try {
-    const ui = SpreadsheetApp.getUi();
-    ui.createMenu('【仕入検品】')
-      .addItem('📊「仕入カウント差異確認」シートを再生成/更新', 'menuUpdateDifferenceSheet')
-      .addItem('🗑️ PL取込データを全削除（全クリア）', 'menuPurgeAllPL')
-      .addSeparator()
-      .addItem('ℹ️ 全シートの初期セットアップ（ヘッダー作成）', 'setupAllSheets')
-      .addToUi();
-  } catch (e) {}
-}
-
-/**
- * メニュー実行用ラッパー（差異確認シート再生成）
- */
-function menuUpdateDifferenceSheet() {
-  const result = updateDifferenceVerificationSheet();
-  try {
-    SpreadsheetApp.getUi().alert('【差異確認シート更新完了】\n\n' + result.message);
-  } catch (e) {}
-}
-
-/**
- * メニュー実行用ラッパー（PL取込データ全削除・2段階確認付き）
- */
-function menuPurgeAllPL() {
-  const ui = SpreadsheetApp.getUi();
-  const res1 = ui.alert('【警告】PLデータの全削除', '「PL取込」シートに取り込まれているすべてのPLデータ（未カウント・カウント済み含む）を完全に削除します。\n\n本当に実行しますか？', ui.ButtonSet.YES_NO);
-  if (res1 !== ui.Button.YES) return;
-
-  const res2 = ui.alert('【最終確認】本当によろしいですか？', 'この操作は元に戻せません。\n本当にすべてのPLデータを削除しますか？', ui.ButtonSet.YES_NO);
-  if (res2 !== ui.Button.YES) return;
-
-  const result = purgeAllPLImportSheet(false);
-  ui.alert(result.message);
-}
-
-/**
- * Web App GET リクエスト処理
- */
-function doGet(e) {
-  try {
-    const params = e ? e.parameter : {};
-    const action = params.action || 'ping';
-
-    // 1. 疎通確認（Ping）
-    if (action === 'ping') {
-      return createJsonResponse({ status: 'success', message: '仕入カウント確認報告 API は正常に稼働しています', timestamp: new Date().toISOString() });
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>仕入カウント確認報告 - メキシコ便入荷検品</title>
+  <meta name="description" content="無料インフラで稼働するスマホ片手最適化の入荷検品Webアプリ">
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      touch-action: manipulation;
     }
-
-    // 2. 商品マスタ取得
-    if (action === 'getMaster') {
-      const masterList = getMasterData();
-      return createJsonResponse({ status: 'success', count: masterList.length, data: masterList });
+    input, textarea {
+      user-select: text;
     }
-
-    // 3. PL進捗・未カウントPLデータ一覧取得
-    if (action === 'getPLList' || action === 'getUncountedPL' || action === 'refreshPLData') {
-      const summary = getUncountedPLData();
-      return createJsonResponse({ status: 'success', count: summary.plList.length, data: summary.plList, uncountedCount: summary.uncountedCount, countedCount: summary.countedCount });
+    .pb-safe {
+      padding-bottom: max(1rem, env(safe-area-inset-bottom));
     }
-
-    // 4. 特定PLの明細商品一覧取得
-    if (action === 'getPL' || action === 'getPLDetails') {
-      const plNo = params.plNo;
-      if (!plNo) {
-        return createJsonResponse({ status: 'error', message: 'plNo パラメータが必要です' }, 400);
-      }
-      const plDetails = getPLDetails(plNo);
-      return createJsonResponse({ status: 'success', plNo: plNo, count: plDetails.length, data: plDetails });
+    .pt-safe {
+      padding-top: max(0.5rem, env(safe-area-inset-top));
     }
-
-    // 5. PL取込データ全削除API
-    if (action === 'purgeAllPL') {
-      const result = purgeAllPLImportSheet(true);
-      return createJsonResponse(result);
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
     }
-
-    // 6. 「仕入カウント差異確認」シートの明示的更新API
-    if (action === 'updateDiffSheet' || action === 'generateDiffReport') {
-      const result = updateDifferenceVerificationSheet();
-      return createJsonResponse(result);
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
     }
-
-    return createJsonResponse({ status: 'error', message: '不明なアクション: ' + action }, 400);
-  } catch (error) {
-    return createJsonResponse({ status: 'error', message: error.toString(), stack: error.stack }, 500);
-  }
-}
-
-/**
- * Web App POST リクエスト処理
- */
-function doPost(e) {
-  const lock = LockService.getScriptLock();
-  const hasLock = lock.tryLock(30000);
-
-  if (!hasLock) {
-    return createJsonResponse({ status: 'error', message: '他の端末が書き込み中です。少し待ってから再試行してください。(Lock Timeout)' }, 503);
-  }
-
-  try {
-    let postData = {};
-    if (e && e.postData && e.postData.contents) {
-      try {
-        postData = JSON.parse(e.postData.contents);
-      } catch (parseErr) {
-        postData = e.parameter || {};
-      }
-    } else if (e && e.parameter) {
-      postData = e.parameter;
+    @keyframes pulse-subtle {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.85; }
     }
-
-    const action = postData.action || '';
-
-    // 検品実績の登録
-    if (action === 'submitInspection') {
-      const result = saveInspectionResults(postData);
-      return createJsonResponse(result);
+    .animate-pulse-subtle {
+      animation: pulse-subtle 2s infinite ease-in-out;
     }
+  </style>
+<script src="/_aistudio-iframe.js?v=1f94f900"></script></head>
+<body class="bg-slate-50 text-slate-900 min-h-screen flex flex-col font-sans antialiased overflow-x-hidden">
 
-    // PL取込データ全削除API
-    if (action === 'purgeAllPL') {
-      const result = purgeAllPLImportSheet(true);
-      return createJsonResponse(result);
-    }
+  <!-- ========================================================
+       ネットワーク状態・オフライン安心インジケータ (課題B対策)
+       ======================================================== -->
+  <div id="offline-banner" class="hidden bg-amber-500 text-slate-950 px-3 py-1.5 text-center text-xs font-bold flex items-center justify-center gap-1.5 shadow-md z-40">
+    <span>⚠️ 電波が不安定なため、データを一時保存しました（後から再送可能）</span>
+  </div>
 
-    if (action === 'updateDiffSheet') {
-      const result = updateDifferenceVerificationSheet();
-      return createJsonResponse(result);
-    }
+  <!-- ========================================================
+       TOP APP BAR (ヘッダー・白色基調)
+       ======================================================== -->
+  <header class="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-3.5 py-2.5 flex items-center justify-between shadow-sm">
+    <div class="flex items-center gap-2">
+      <div id="btn-header-back" onclick="onHeaderBackClick()" class="hidden p-1.5 rounded-lg bg-slate-100 text-slate-700 hover:text-slate-900 cursor-pointer active:scale-95">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+      </div>
+      <div id="header-brand-logo" class="w-7 h-7 rounded-lg bg-emerald-600 flex items-center justify-center font-black text-white text-xs shadow-sm">
+        検
+      </div>
+      <div>
+        <h1 class="text-xs font-bold tracking-tight text-slate-900 leading-none">仕入カウント確認報告</h1>
+        <div class="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-500">
+          <button onclick="openWorkerModal()" class="text-emerald-700 font-bold hover:underline">
+            <span id="header-worker-label">作業者: 山田 太郎 ✎</span>
+          </button>
+          <span id="header-pl-sep" class="hidden">·</span>
+          <span id="header-pl-badge" class="hidden text-amber-700 font-mono font-bold">PL: -</span>
+        </div>
+      </div>
+    </div>
 
-    return createJsonResponse({ status: 'error', message: '不明なアクション: ' + action }, 400);
-  } catch (error) {
-    return createJsonResponse({ status: 'error', message: error.toString() }, 500);
-  } finally {
-    lock.releaseLock();
-  }
-}
+    <div class="flex items-center gap-1.5">
+      <button onclick="refreshPLDataFromGas(false)" id="btn-pl-refresh-header" class="px-2 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 border border-sky-300 text-sky-800 text-[10px] font-bold active:scale-95 flex items-center gap-1">
+        <span>⟳ PL反映</span>
+      </button>
 
-/**
- * 商品マスタシートの読み込み
- */
-function getMasterData() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAMES.MASTER);
-  if (!sheet) {
-    setupAllSheets();
-    sheet = ss.getSheetByName(SHEET_NAMES.MASTER);
-  }
+      <button onclick="fetchMasterFromGas(false)" id="btn-master-refresh-header" class="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-[10px] font-bold active:scale-95 flex items-center gap-1">
+        <span>⟳ マスタ更新</span>
+        <span id="header-master-count" class="font-mono text-[9px]">(8)</span>
+      </button>
 
-  const values = sheet.getDataRange().getValues();
-  if (values.length <=  1) return [];
+      <button onclick="openImporterModal()" class="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-[10px] font-bold active:scale-95 flex items-center gap-1">
+        <span>PL取込</span>
+      </button>
 
-  const list = [];
-  for (let i = 1; i < values.length; i++) {
-    const row = values[i];
-    const itemCode = String(row[0] || '').trim();
-    if (!itemCode) continue;
+      <button id="btn-pending-queue" onclick="openPendingQueueModal()" class="hidden relative px-2 py-1 rounded-lg bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-bold active:scale-95">
+        <span>再送</span>
+        <span id="pending-count-badge" class="ml-1 bg-amber-500 text-white text-[9px] px-1 py-0.2 rounded-full font-black">0</span>
+      </button>
 
-    list.push({
-      itemCode: itemCode,
-      mexDesign: String(row[1] || '').trim(),
-      mexColor: String(row[2] || '').trim(),
-      mexSize: String(row[3] || '').trim(),
-      jpDesign: String(row[4] || '').trim(),
-      jpColor: String(row[5] || '').trim(),
-      jpSize: String(row[6] || '').trim()
-    });
-  }
-  return list;
-}
+      <button onclick="openSettingsModal()" class="p-1.5 rounded-lg bg-slate-100 text-slate-700 hover:text-slate-900 border border-slate-300 active:scale-95" title="設定">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+      </button>
+    </div>
+  </header>
 
-/**
- * 「PL取込」シートから未カウントのPL一覧および進捗サマリーを抽出
- */
-function getUncountedPLData() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let importSheet = ss.getSheetByName(SHEET_NAMES.PL_IMPORT);
-  let countSheet = ss.getSheetByName(SHEET_NAMES.COUNT);
+  <!-- ========================================================
+       メインビュー切り替えコンテナ
+       ======================================================== -->
+  <main class="flex-1 flex flex-col justify-between overflow-hidden">
+    
+    <!-- VIEW 1: PL入力画面 -->
+    <div id="view-pl-entry" class="flex-1 flex flex-col justify-between p-3.5 pb-safe overflow-y-auto">
+      <div class="space-y-2">
+        <div class="p-3 bg-gradient-to-r from-white to-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between gap-2 shadow-sm">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span class="text-xs font-bold text-slate-900">商品マスタ連携</span>
+              <span class="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded font-bold">自動同期対応</span>
+            </div>
+            <div class="text-[11px] text-slate-600 mt-1 truncate">
+              登録数: <strong id="card-master-count" class="text-emerald-700 font-mono font-bold">8件</strong>
+              <span id="card-master-sync-time"> · スプレッドシート連動</span>
+            </div>
+          </div>
+          <button type="button" onclick="fetchMasterFromGas(false)" id="btn-card-master-refresh" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow transition-all shrink-0 flex items-center gap-1">
+            <span>⟳ マスタ更新</span>
+          </button>
+        </div>
 
-  if (!importSheet || !countSheet) {
-    setupAllSheets();
-    importSheet = ss.getSheetByName(SHEET_NAMES.PL_IMPORT);
-    countSheet = ss.getSheetByName(SHEET_NAMES.COUNT);
-  }
+        <div class="flex items-center justify-between flex-wrap gap-1.5 pt-1">
+          <span class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1">
+            📦 本日の進捗一覧
+          </span>
+          <div class="flex items-center gap-1.5">
+            <button type="button" onclick="refreshPLDataFromGas(false)" id="btn-card-pl-refresh" class="px-2 py-1 bg-sky-100 hover:bg-sky-200 border border-sky-300 text-sky-800 text-[10px] font-bold rounded-lg flex items-center gap-1 active:scale-95 transition-all">
+              <span>⟳ PL反映</span>
+            </button>
+            <button type="button" onclick="confirmPurgeAllPL()" id="btn-card-pl-purge" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-800 text-[10px] font-bold rounded-lg flex items-center gap-1 active:scale-95 transition-all" title="取り込んだすべてのPLデータを削除します">
+              <span>🗑️ PLデータ全削除</span>
+            </button>
+          </div>
+        </div>
 
-  const countedPLMap = {};
-  if (countSheet && countSheet.getLastRow() > 1) {
-    const countValues = countSheet.getDataRange().getValues();
-    for (let i = 1; i < countValues.length; i++) {
-      const row = countValues[i];
-      const plNo = String(row[2] || '').trim();
-      const inspector = String(row[1] || '').trim();
-      const dateVal = row[0];
-      if (plNo) {
-        countedPLMap[plNo] = {
-          isCompleted: true,
-          inspectorName: inspector,
-          completedAt: dateVal instanceof Date ? formatDate(dateVal) : String(dateVal || '')
-        };
-      }
-    }
-  }
+        <div id="all-completed-banner" class="hidden p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-300 text-center animate-pulse-subtle shadow-md">
+          <span class="text-2xl block mb-1">🎉</span>
+          <div class="text-sm font-bold text-emerald-900">本日の全入荷検品が完了しました！</div>
+          <div class="text-xs text-emerald-700 mt-0.5">全パッキングリストの登録・送信が完了しています。</div>
+        </div>
 
-  const importValues = importSheet.getDataRange().getValues();
-  if (importValues.length <=  1) {
-    return { plList: [], uncountedCount: 0, countedCount: 0 };
-  }
+        <div id="pl-dashboard-grid" class="grid grid-cols-3 gap-2"></div>
+      </div>
 
-  const plSummaryMap = {};
-  let uncountedCount = 0;
-  let countedCount = 0;
+      <div class="my-auto py-4 max-w-sm mx-auto w-full">
+        <div class="text-center mb-2">
+          <span class="text-xs font-bold text-slate-600 uppercase tracking-widest block">
+            検品するPL番号をテンキー入力
+          </span>
+          <div class="mt-1.5 h-16 bg-white border-2 border-slate-300 rounded-2xl flex items-center justify-center px-4 shadow-sm">
+            <span id="pl-keypad-display" class="text-3xl font-black font-mono tracking-widest text-slate-400">
+              PL番号を入力
+            </span>
+          </div>
+        </div>
 
-  for (let i = 1; i < importValues.length; i++) {
-    const row = importValues[i];
-    const itemCode = String(row[0] || '').trim();
-    const plNo = String(row[1] || '').trim();
-    if (!itemCode || !plNo) continue;
+        <div class="grid grid-cols-3 gap-2">
+          <button onclick="pressPlKeypad('1')" class="h-14 bg-white hover:bg-slate-100 active:bg-slate-200 rounded-2xl text-2xl font-black text-slate-800 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">1</button>
+          <button onclick="pressPlKeypad('2')" class="h-14 bg-white hover:bg-slate-100 active:bg-slate-200 rounded-2xl text-2xl font-black text-slate-800 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">2</button>
+          <button onclick="pressPlKeypad('3')" class="h-14 bg-white hover:bg-slate-100 active:bg-slate-200 rounded-2xl text-2xl font-black text-slate-800 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">3</button>
+          <button onclick="pressPlKeypad('4')" class="h-14 bg-white hover:bg-slate-100 active:bg-slate-200 rounded-2xl text-2xl font-black text-slate-800 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">4</button>
+          <button onclick="pressPlKeypad('5')" class="h-14 bg-white hover:bg-slate-100 active:bg-slate-200 rounded-2xl text-2xl font-black text-slate-800 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">5</button>
+          <button onclick="pressPlKeypad('6')" class="h-14 bg-white hover:bg-slate-100 active:bg-slate-200 rounded-2xl text-2xl font-black text-slate-800 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">6</button>
+          <button onclick="pressPlKeypad('7')" class="h-14 bg-white hover:bg-slate-100 active:bg-slate-200 rounded-2xl text-2xl font-black text-slate-800 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">7</button>
+          <button onclick="pressPlKeypad('8')" class="h-14 bg-white hover:bg-slate-100 active:bg-slate-200 rounded-2xl text-2xl font-black text-slate-800 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">8</button>
+          <button onclick="pressPlKeypad('9')" class="h-14 bg-white hover:bg-slate-100 active:bg-slate-200 rounded-2xl text-2xl font-black text-slate-800 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">9</button>
+          <button onclick="clearPlKeypad()" class="h-14 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 rounded-2xl text-xs font-black text-rose-600 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">C (消去)</button>
+          <button onclick="pressPlKeypad('0')" class="h-14 bg-white hover:bg-slate-100 active:bg-slate-200 rounded-2xl text-2xl font-black text-slate-800 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">0</button>
+          <button onclick="backspacePlKeypad()" class="h-14 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 rounded-2xl text-sm font-bold text-slate-700 shadow-sm active:scale-95 transition-transform flex items-center justify-center border border-slate-300">⌫ 戻る</button>
+        </div>
 
-    const qty = Number(row[8]) || Number(String(row[8] || '').replace(/[^0-9]/g, '')) || 0;
+        <button onclick="confirmPlKeypad()" class="w-full mt-3.5 h-14 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white font-black text-base rounded-2xl shadow-md flex items-center justify-center gap-2 transition-all">
+          <span>PL番号を確定して検品開始</span>
+          <span class="text-xl">➔</span>
+        </button>
+      </div>
+    </div>
 
-    if (!plSummaryMap[plNo]) {
-      const completedInfo = countedPLMap[plNo];
-      const isDone = !!completedInfo;
-      if (isDone) {
-        countedCount++;
-      } else {
-        uncountedCount++;
-      }
+    <!-- VIEW 2: 検品画面 -->
+    <div id="view-inspecting" class="flex-1 flex flex-col justify-between overflow-hidden hidden">
+      <div class="px-4 py-2.5 bg-white border-b border-slate-200 flex items-center justify-between text-xs shadow-sm">
+        <div>
+          <span class="text-[11px] text-slate-500 block">対象PL</span>
+          <span id="inspect-pl-label" class="font-mono font-black text-slate-900 text-base">PL -</span>
+        </div>
+        <div class="text-right">
+          <span class="text-[11px] text-slate-500 block">検品進捗</span>
+          <span id="inspect-progress-label" class="font-bold text-emerald-600 text-sm font-mono">0 / 0 品目</span>
+        </div>
+      </div>
 
-      plSummaryMap[plNo] = {
-        plNo: plNo,
-        totalLines: 0,
-        totalPlanQty: 0,
-        isCompleted: isDone,
-        inspectorName: isDone ? completedInfo.inspectorName : '',
-        completedAt: isDone ? completedInfo.completedAt : ''
-      };
-    }
+      <div id="inspection-cards-container" class="flex-1 overflow-y-auto p-3.5 space-y-3"></div>
 
-    plSummaryMap[plNo].totalLines += 1;
-    plSummaryMap[plNo].totalPlanQty += qty;
-  }
+      <div class="p-3.5 bg-white border-t border-slate-200 pb-safe shadow-lg">
+        <button id="btn-goto-confirm" onclick="goToConfirmScreen()" disabled class="w-full py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 transition-all shadow-md bg-slate-200 text-slate-400 cursor-not-allowed">
+          <span>送信前の最終確認プレビューへ</span>
+          <span>➔</span>
+        </button>
+        <div id="confirm-hint-text" class="text-xs text-slate-500 text-center mt-1.5 font-medium">
+          ※全商品の【一致】確認または実数入力が完了すると進めます
+        </div>
+      </div>
+    </div>
 
-  const plList = [];
-  for (const pl in plSummaryMap) {
-    plList.push(plSummaryMap[pl]);
-  }
-  return { plList: plList, uncountedCount: uncountedCount, countedCount: countedCount };
-}
+    <!-- VIEW 3: 最終確認プレビュー画面 -->
+    <div id="view-confirm" class="flex-1 flex flex-col justify-between overflow-hidden hidden">
+      <div class="p-3.5 bg-white border-b border-slate-200 flex items-center justify-between shadow-sm">
+        <div>
+          <h3 class="text-sm font-bold text-slate-900">送信前 最終確認リスト</h3>
+          <p id="confirm-pl-sub" class="text-xs text-slate-500">PL の検品結果</p>
+        </div>
+        <button onclick="backToInspectionScreen()" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-bold text-slate-700">
+          修正に戻る
+        </button>
+      </div>
 
-/**
- * 特定のPL番号に紐づく予定商品明細を抽出
- */
-function getPLDetails(targetPlNo) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let importSheet = ss.getSheetByName(SHEET_NAMES.PL_IMPORT);
-  if (!importSheet) {
-    setupAllSheets();
-    importSheet = ss.getSheetByName(SHEET_NAMES.PL_IMPORT);
-  }
+      <div id="confirm-items-container" class="flex-1 overflow-y-auto p-3.5 space-y-2.5"></div>
 
-  const masterList = getMasterData();
-  const masterMap = {};
-  for (let i = 0; i < masterList.length; i++) {
-    masterMap[masterList[i].itemCode] = masterList[i];
-  }
+      <div class="p-3.5 bg-white border-t border-slate-200 pb-safe space-y-2 shadow-lg">
+        <div class="flex justify-between text-xs text-slate-600 px-1 font-bold">
+          <span>作業責任者: <strong id="confirm-worker-name" class="text-slate-900">-</strong></span>
+          <span id="confirm-total-items-badge">全 0 品目</span>
+        </div>
+        <!-- 課題D対策: 二重送信ブロック用スピナー対応ボタン -->
+        <button id="btn-final-submit" onclick="submitInspectionData()" class="w-full py-4 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white font-black text-base rounded-2xl shadow-md flex items-center justify-center gap-2 transition-all">
+          <span>検品結果を送信して完了する</span>
+        </button>
+      </div>
+    </div>
+  </main>
 
-  const values = importSheet.getDataRange().getValues();
-  const results = [];
-  const cleanTargetPl = String(targetPlNo).trim();
+  <!-- MODAL: 差異・例外報告フォーム (課題A: 未登録商品手入力セクション統合) -->
+  <div id="modal-exception" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 hidden">
+    <div class="bg-white border border-amber-300 rounded-3xl p-4 sm:p-5 max-w-md w-full shadow-2xl max-h-[92vh] flex flex-col">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-200">
+        <div class="flex items-center gap-2">
+          <span class="text-xl">⚠️</span>
+          <div>
+            <h3 class="text-sm font-bold text-slate-900">差異・例外報告の入力</h3>
+            <p class="text-[11px] text-amber-700">要因別（過不足/サイズ違い/商品違い）の内訳を登録</p>
+          </div>
+        </div>
+        <button onclick="closeDiscrepancyModal()" class="text-slate-400 hover:text-slate-700 text-lg p-1">✕</button>
+      </div>
 
-  for (let i = 1; i < values.length; i++) {
-    const row = values[i];
-    const plNo = String(row[1] || '').trim();
-    if (plNo !== cleanTargetPl) continue;
+      <div class="py-2.5 px-3 bg-slate-50 rounded-xl border border-slate-200 mt-3 text-xs">
+        <div class="text-[11px] text-slate-500 font-mono" id="disc-modal-code"></div>
+        <div class="text-sm font-bold text-slate-900 truncate" id="disc-modal-title"></div>
+        <div class="text-xs text-slate-600 flex items-center gap-3 mt-1">
+          <span>予定数量: <strong class="text-amber-700 font-mono text-sm" id="disc-modal-plan-qty">0</strong> 点</span>
+        </div>
+      </div>
 
-    const itemCode = String(row[0] || '').trim();
-    const item = String(row[2] || '').trim();
-    const color = String(row[4] || '').trim();
-    const size = String(row[5] || '').trim();
-    const pallet = String(row[6] || '').trim();
-    const qty = Number(row[8]) || Number(String(row[8] || '').replace(/[^0-9]/g, '')) || 0;
+      <div class="flex-1 overflow-y-auto my-3 space-y-3 pr-1" id="discrepancy-rows-container"></div>
 
-    const master = masterMap[itemCode] || {
-      itemCode: itemCode,
-      mexDesign: item,
-      mexColor: color,
-      mexSize: size,
-      jpDesign: '未登録商品 (' + itemCode + ')',
-      jpColor: color || '',
-      jpSize: size || ''
+      <button onclick="addDiscrepancyRow()" class="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-amber-800 text-xs font-bold rounded-xl border border-dashed border-amber-400 flex items-center justify-center gap-1.5 transition-all">
+        <span>＋ 差異要因を追加</span>
+      </button>
+
+      <div class="mt-3 p-3 bg-slate-100 rounded-xl border border-slate-200 flex items-center justify-between text-xs font-mono">
+        <span class="text-slate-600 text-xs">検品実数 / 予定比</span>
+        <div class="text-right">
+          <span class="text-slate-900 font-bold text-sm" id="disc-modal-total-calc">実数: 0点</span>
+          <span class="font-bold ml-2 text-sm" id="disc-modal-diff-calc">(差異: 0)</span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 mt-3 pt-2 border-t border-slate-200">
+        <button onclick="closeDiscrepancyModal()" class="py-3 bg-slate-100 text-slate-700 text-xs font-bold rounded-xl border border-slate-200">
+          戻る
+        </button>
+        <button onclick="saveDiscrepanciesModal()" class="py-3 bg-amber-600 hover:bg-amber-500 text-white font-black text-xs rounded-xl shadow">
+          差異を登録して完了
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: 商品マスタ検索 ＆ 未登録商品のその場新規追加モーダル (課題A対策) -->
+  <div id="modal-search-master" class="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 hidden">
+    <div class="bg-white border border-blue-300 rounded-3xl p-4 max-w-md w-full shadow-2xl max-h-[88vh] flex flex-col">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-200 mb-2">
+        <h3 class="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+          <span>🔍</span>
+          <span>商品マスタ検索・選択</span>
+        </h3>
+        <button onclick="closeSearchMasterModal()" class="text-slate-400 text-base">✕</button>
+      </div>
+
+      <div class="mb-2">
+        <input type="text" id="master-search-input" oninput="filterMasterSearch(this.value)" placeholder="品名、商品コード、サイズで絞り込み..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
+      </div>
+
+      <!-- 課題A対策: ヒットしない場合のその場新規手入力ブロック -->
+      <div class="p-2.5 bg-blue-50/70 rounded-xl border border-blue-200 mb-2 space-y-2">
+        <div class="text-[11px] font-bold text-blue-900">⚠️ マスタにない新商品の場合はこちらから直接作成</div>
+        <div class="grid grid-cols-2 gap-1.5">
+          <input type="text" id="new-item-code-input" placeholder="商品コード" class="bg-white border border-blue-300 rounded-lg px-2 py-1 text-xs font-mono">
+          <input type="text" id="new-item-name-input" placeholder="商品名(日本名)" class="bg-white border border-blue-300 rounded-lg px-2 py-1 text-xs">
+        </div>
+        <div class="flex items-center gap-1.5">
+          <input type="text" id="new-item-size-input" placeholder="サイズ (例: FREE)" class="flex-1 bg-white border border-blue-300 rounded-lg px-2 py-1 text-xs">
+          <button type="button" onclick="registerAndSelectCustomItem()" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg shadow">
+            ＋ 新規作成して選択
+          </button>
+        </div>
+      </div>
+
+      <div class="flex-1 overflow-y-auto space-y-1.5 pr-1" id="master-search-results"></div>
+    </div>
+  </div>
+
+  <!-- MODAL: PL取り込み -->
+  <div id="modal-importer" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-white border border-slate-200 rounded-3xl p-5 max-w-lg w-full shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-200 mb-3">
+        <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+          <span>📊</span>
+          <span>PL事前取り込み（Excelコピペ一括解析）</span>
+        </h3>
+        <button onclick="closeImporterModal()" class="text-slate-400 text-sm">✕</button>
+      </div>
+
+      <p class="text-xs text-slate-600 mb-2">
+        メキシコから届いたExcelのセル範囲をコピーして貼り付けてください。
+      </p>
+
+      <textarea id="importer-textarea" rows="6" placeholder="Excelからコピーしたデータをここに貼り付け" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-mono text-slate-800 mb-3 focus:outline-none focus:border-amber-500"></textarea>
+
+      <div class="flex gap-2 mb-3">
+        <button onclick="clearImporterText()" class="px-3 py-2 bg-slate-100 text-slate-600 text-xs font-bold rounded-xl border border-slate-300">クリア</button>
+        <button onclick="executeParseImporter()" class="flex-1 py-2.5 bg-amber-600 text-white text-xs font-black rounded-xl shadow">自動解析して取り込む</button>
+      </div>
+
+      <div id="importer-result-msg" class="text-xs p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 font-mono hidden"></div>
+    </div>
+  </div>
+
+  <!-- MODAL: 設定 -->
+  <div id="modal-settings" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 hidden">
+    <div class="bg-white border border-slate-200 rounded-3xl p-5 max-w-sm w-full shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-200 mb-3">
+        <h3 class="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+          <span>⚙️</span>
+          <span>GAS Webアプリ連携設定</span>
+        </h3>
+        <button onclick="closeSettingsModal()" class="text-slate-400 text-sm hover:text-slate-700">✕</button>
+      </div>
+
+      <div class="space-y-3 text-xs mb-4">
+        <div>
+          <label class="block text-slate-700 font-bold mb-1">作業者氏名</label>
+          <input type="text" id="setting-worker-input" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-900 font-bold text-xs">
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label class="text-slate-700 font-bold">GAS Web App URL</label>
+            <button type="button" onclick="pasteGasUrlFromClipboard()" class="text-[10px] text-sky-600 font-bold hover:underline">貼り付け</button>
+          </div>
+          <input type="url" id="setting-gas-url-input" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-800 font-mono text-[10px]">
+        </div>
+
+        <button type="button" onclick="testGasUrlConnection()" class="w-full py-2 bg-slate-100 text-sky-800 border border-slate-300 rounded-xl font-bold text-[11px]">🔗 接続テストを実行</button>
+        <div id="gas-test-msg" class="text-[11px] p-2 rounded-xl bg-slate-50 border border-slate-200 hidden"></div>
+      </div>
+
+      <button onclick="saveSettings()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 font-bold text-xs text-white rounded-xl shadow">設定を保存する</button>
+    </div>
+  </div>
+
+  <!-- MODAL: 作業者名変更 -->
+  <div id="modal-worker" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-white border border-slate-200 rounded-2xl p-4 max-w-sm w-full shadow-xl">
+      <h3 class="text-xs font-bold text-slate-900 mb-2">作業者氏名の変更</h3>
+      <input type="text" id="worker-quick-input" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 text-sm text-slate-900 font-bold mb-3">
+      <div class="flex gap-2">
+        <button onclick="closeWorkerModal()" class="flex-1 py-2.5 bg-slate-100 text-slate-700 text-xs font-bold rounded-xl border border-slate-300">キャンセル</button>
+        <button onclick="saveWorkerQuick()" class="flex-1 py-2.5 bg-emerald-600 text-white font-bold text-xs rounded-xl shadow">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="fixed top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-xl pointer-events-none transition-all duration-300 opacity-0 -translate-y-2"></div>
+
+  <!-- JAVASCRIPT APPLICATION LOGIC -->
+  <script>
+    let masterList = [];
+    let plItemsAll = [];
+    let plProgress = [];
+
+    let state = {
+      workerName: localStorage.getItem('inspection_worker') || '山田 太郎',
+      gasUrl: localStorage.getItem('inspection_gas_url') || '',
+      currentScreen: 'pl_entry',
+      selectedPL: '',
+      currentInspectionItems: [],
+      plKeypadBuffer: '',
+      targetItemIndex: -1,
+      manualQtyBuffer: '0',
+      activeDiscrepancies: [],
+      activeDiscrepancyRowIndex: -1,
+      pendingQueue: JSON.parse(localStorage.getItem('inspection_pending_queue') || '[]'),
+      isOnline: navigator.onLine
     };
 
-    results.push({
-      itemCode: itemCode,
-      plNo: plNo,
-      mexDesign: master.mexDesign || item,
-      mexColor: master.mexColor || color,
-      mexSize: master.mexSize || size,
-      jpDesign: master.jpDesign,
-      jpColor: master.jpColor,
-      jpSize: master.jpSize,
-      planQty: qty,
-      palletNo: pallet
+    // 初期化および自動サイレント同期 (課題E対策)
+    document.addEventListener('DOMContentLoaded', async () => {
+      updateWorkerHeader();
+      loadLocalMaster();
+      updatePendingBadge();
+      setupNetworkListeners();
+
+      // 起動時にバックグラウンドでマスタをサイレント自動同期
+      if (state.gasUrl) {
+        await fetchMasterFromGas(true);
+        await refreshPLDataFromGas(true);
+      }
+      renderPLDashboard();
     });
-  }
-  return results;
-}
 
-/**
- * 【全削除機能】
- * 「PL取込」シートの全データを完全クリアする（ヘッダー行を除く）
- */
-function purgeAllPLImportSheet(isApiCall) {
-  const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(30000);
-  } catch (e) {
-    const errMsg = '現在他の端末が書き込み処理中です。少し待ってから再試行してください。';
-    if (!isApiCall) SpreadsheetApp.getUi().alert(errMsg);
-    return { status: 'error', message: errMsg };
-  }
-
-  try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    let importSheet = ss.getSheetByName(SHEET_NAMES.PL_IMPORT);
-    if (!importSheet) {
-      throw new Error('「PL取込」シートが見つかりません。');
-    }
-
-    const lastRow = importSheet.getLastRow();
-    const lastCol = Math.max(importSheet.getLastColumn(), 10);
-
-    if (lastRow <= 1) {
-      const emptyMsg = '「PL取込」シートに削除するデータが存在しません。';
-      return { status: 'success', deletedRows: 0, message: emptyMsg };
-    }
-
-    // ヘッダー（1行目）を残して全データ行をクリア
-    importSheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
-
-    const successMsg = '「PL取込」シートの全PLデータを完全に削除しました。';
-    return {
-      status: 'success',
-      deletedRows: lastRow - 1,
-      message: successMsg
-    };
-
-  } catch (err) {
-    return { status: 'error', message: err.message };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-/**
- * 検品結果を「仕入カウント」シートへ保存 ＆ 「仕入カウント差異確認」シートを自動更新
- */
-function saveInspectionResults(postData) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAMES.COUNT);
-
-  if (!sheet) {
-    setupAllSheets();
-    sheet = ss.getSheetByName(SHEET_NAMES.COUNT);
-  }
-
-  const items = postData.items || [];
-  if (!Array.isArray(items) || items.length === 0) {
-    return { status: 'error', message: '検品アイテムリストが空です。' };
-  }
-
-  const inspectorName = String(postData.inspectorName || '未記入').trim();
-  const plNo = String(postData.plNo || '').trim();
-  const sessionId = String(postData.sessionId || ('SES-' + new Date().getTime()));
-  const timestamp = formatDate(new Date());
-
-  const rowsToAppend = [];
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i];
-    const planQty = Number(it.planQty) || 0;
-    const actualQty = Number(it.actualQty !== null ? it.actualQty : planQty);
-    const diffQty = actualQty - planQty;
-
-    let status = '一致';
-    let exceptionNoteFormatted = '';
-
-    if (it.hasException && Array.isArray(it.discrepancies) && it.discrepancies.length > 0) {
-      const reasons = [];
-      for (let d = 0; d < it.discrepancies.length; d++) {
-        const r = it.discrepancies[d].reason;
-        if (reasons.indexOf(r) === -1) reasons.push(r);
-      }
-      status = '差異: ' + reasons.join('/');
-
-      const noteParts = [];
-      for (let d = 0; d < it.discrepancies.length; d++) {
-        const disc = it.discrepancies[d];
-        let part = '【' + disc.reason + '】';
-        if (disc.targetItemCode) {
-          part += disc.targetItemCode + ' (' + (disc.targetItemName || '') + ' ' + (disc.targetSize || '') + ') ';
-        }
-        part += (disc.reason === '数量過不足' ? '実数: ' + disc.qty : disc.qty + '点');
-        if (disc.note) {
-          part += ' [' + disc.note + ']';
-        }
-        noteParts.push(part);
-      }
-      exceptionNoteFormatted = noteParts.join(' / ');
-    } else if (diffQty !== 0) {
-      status = diffQty > 0 ? '超過 (+' + diffQty + ')' : '不足 (' + diffQty + ')';
-    }
-
-    const mexNotation = (it.mexDesign || '') + ' / ' + (it.mexColor || '') + ' / ' + (it.mexSize || '');
-    const jpNotation = (it.jpDesign || '') + ' / ' + (it.jpColor || '') + ' / ' + (it.jpSize || '');
-    const rawDiscrepanciesJson = JSON.stringify(it.discrepancies || []);
-
-    rowsToAppend.push([
-      timestamp,
-      inspectorName,
-      plNo,
-      String(it.itemCode || ''),
-      mexNotation,
-      jpNotation,
-      planQty,
-      actualQty,
-      diffQty,
-      status,
-      exceptionNoteFormatted,
-      sessionId,
-      rawDiscrepanciesJson
-    ]);
-  }
-
-  if (rowsToAppend.length > 0) {
-    const startRow = sheet.getLastRow() + 1;
-    sheet.getRange(startRow, 1, rowsToAppend.length, rowsToAppend[0].length).setValues(rowsToAppend);
-  }
-
-  try {
-    updateDifferenceVerificationSheet();
-  } catch (err) {
-    console.warn('差異確認シート自動更新エラー: ' + err);
-  }
-
-  return { 
-    status: 'success', 
-    count: rowsToAppend.length, 
-    plNo: plNo, 
-    message: 'PL「' + plNo + '」の検品結果 ' + rowsToAppend.length + ' 件を「仕入カウント」に記録し、「仕入カウント差異確認」シートを最新化しました。' 
-  };
-}
-
-/**
- * 【仕入カウント差異確認】シートの出力 ＆ ハイブリッド構造構築
- */
-function updateDifferenceVerificationSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let diffSheet = ss.getSheetByName(SHEET_NAMES.DIFF_CHECK);
-  if (!diffSheet) {
-    diffSheet = ss.insertSheet(SHEET_NAMES.DIFF_CHECK);
-  }
-
-  const importSheet = ss.getSheetByName(SHEET_NAMES.PL_IMPORT);
-  const countSheet = ss.getSheetByName(SHEET_NAMES.COUNT);
-  const masterList = getMasterData();
-  const masterMap = {};
-  for (let i = 0; i < masterList.length; i++) {
-    masterMap[masterList[i].itemCode] = masterList[i];
-  }
-
-  const inspectionMap = {};
-  const mixedItemsByPL = {};
-
-  if (countSheet && countSheet.getLastRow() > 1) {
-    const countValues = countSheet.getDataRange().getValues();
-    for (let i = 1; i < countValues.length; i++) {
-      const row = countValues[i];
-      const timestamp = row[0];
-      const inspector = String(row[1] || '').trim();
-      const plNo = String(row[2] || '').trim();
-      const itemCode = String(row[3] || '').trim();
-      const planQty = Number(row[6]) || 0;
-      const actualQty = Number(row[7]) || 0;
-      const diffQty = Number(row[8]) || 0;
-      const status = String(row[9] || '').trim();
-      const note = String(row[10] || '').trim();
-      const jsonStr = String(row[12] || '').trim();
-
-      if (!plNo) continue;
-
-      const key = plNo + '__' + itemCode;
-      let parsedDiscrepancies = [];
-      if (jsonStr) {
-        try { parsedDiscrepancies = JSON.parse(jsonStr); } catch (e) {}
-      }
-
-      inspectionMap[key] = {
-        timestamp: timestamp instanceof Date ? formatDate(timestamp) : String(timestamp || ''),
-        inspector: inspector,
-        plNo: plNo,
-        itemCode: itemCode,
-        planQty: planQty,
-        actualQty: actualQty,
-        diffQty: diffQty,
-        status: status,
-        note: note,
-        discrepancies: parsedDiscrepancies
-      };
-
-      if (Array.isArray(parsedDiscrepancies) && parsedDiscrepancies.length > 0) {
-        for (let d = 0; d < parsedDiscrepancies.length; d++) {
-          const disc = parsedDiscrepancies[d];
-          if (disc.reason === '商品違い' && disc.targetItemCode) {
-            if (!mixedItemsByPL[plNo]) mixedItemsByPL[plNo] = [];
-            mixedItemsByPL[plNo].push({
-              plNo: plNo,
-              targetItemCode: disc.targetItemCode,
-              targetItemName: disc.targetItemName || '',
-              targetSize: disc.targetSize || '',
-              qty: Number(disc.qty) || 0,
-              note: disc.note || '',
-              inspector: inspector,
-              timestamp: timestamp instanceof Date ? formatDate(timestamp) : String(timestamp || '')
-            });
-          }
-        }
-      }
-    }
-  }
-
-  const plGroups = {};
-  const allPLSet = {};
-
-  if (importSheet && importSheet.getLastRow() > 1) {
-    const importValues = importSheet.getDataRange().getValues();
-    for (let i = 1; i < importValues.length; i++) {
-      const row = importValues[i];
-      const itemCode = String(row[0] || '').trim();
-      const plNo = String(row[1] || '').trim();
-      if (!itemCode || !plNo) continue;
-
-      const item = String(row[2] || '').trim();
-      const color = String(row[4] || '').trim();
-      const size = String(row[5] || '').trim();
-      const pallet = String(row[6] || '').trim();
-      const qty = Number(row[8]) || Number(String(row[8] || '').replace(/[^0-9]/g, '')) || 0;
-
-      if (!plGroups[plNo]) plGroups[plNo] = [];
-      plGroups[plNo].push({
-        itemCode: itemCode,
-        plNo: plNo,
-        item: item,
-        color: color,
-        size: size,
-        pallet: pallet,
-        planQty: qty
+    function setupNetworkListeners() {
+      window.addEventListener('online', () => {
+        state.isOnline = true;
+        document.getElementById('offline-banner').classList.add('hidden');
+        showToast('オンラインに復帰しました');
+        // キューにデータがあれば自動再送試行
+        if (state.pendingQueue.length > 0) processPendingQueueSilently();
       });
-      allPLSet[plNo] = true;
+      window.addEventListener('offline', () => {
+        state.isOnline = false;
+        document.getElementById('offline-banner').classList.remove('hidden');
+      });
+      if (!navigator.onLine) {
+        document.getElementById('offline-banner').classList.remove('hidden');
+      }
     }
-  }
 
-  for (const key in inspectionMap) {
-    const pl = inspectionMap[key].plNo;
-    allPLSet[pl] = true;
-    if (!plGroups[pl]) plGroups[pl] = [];
-  }
+    function loadLocalMaster() {
+      try {
+        const savedMaster = localStorage.getItem('inspection_master_items');
+        if (savedMaster) {
+          const parsed = JSON.parse(savedMaster);
+          if (Array.isArray(parsed)) masterList = parsed;
+        }
+      } catch (e) {}
+      updateMasterBadge();
+    }
 
-  const sortedPLs = Object.keys(allPLSet).sort(function(a, b) {
-    const numA = parseFloat(String(a).replace(/[^0-9.]/g, '')) || 0;
-    const numB = parseFloat(String(b).replace(/[^0-9.]/g, '')) || 0;
-    if (numA !== numB) return numA - numB;
-    return String(a).localeCompare(String(b));
-  });
+    function updateMasterBadge() {
+      const count = masterList.length;
+      const elHeader = document.getElementById('header-master-count');
+      if (elHeader) elHeader.textContent = `(${count})`;
+      const elCard = document.getElementById('card-master-count');
+      if (elCard) elCard.textContent = `${count}件`;
+      const lastSync = localStorage.getItem('inspection_master_updated_at');
+      const elSyncTime = document.getElementById('card-master-sync-time');
+      if (elSyncTime) {
+        elSyncTime.textContent = lastSync ? ` · 最終同期: ${lastSync}` : ' · スプレッドシート連動';
+      }
+    }
 
-  const outputRows = [];
-  const fontColors = [];
-  const bgColors = [];
-  const fontWeights = [];
+    async function fetchMasterFromGas(isSilent = false) {
+      if (!state.gasUrl) {
+        if (!isSilent) {
+          alert('GAS Web App URLが未設定です。「⚙️ 設定」からURLを入力してください。');
+          openSettingsModal();
+        }
+        return;
+      }
 
-  const RED_COLOR = '#dc2626';
-  const RED_BG = '#fef2f2';
-  const DEFAULT_TEXT = '#1e293b';
-  const DEFAULT_BG = '#ffffff';
+      try {
+        const endpoint = state.gasUrl.includes('?') ? `${state.gasUrl}&action=getMaster` : `${state.gasUrl}?action=getMaster`;
+        const res = await fetch(endpoint, { method: 'GET', headers: { 'Accept': 'application/json' } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        const rawData = json.data || json.masters || [];
 
-  for (let p = 0; p < sortedPLs.length; p++) {
-    const plNo = sortedPLs[p];
-    const plannedLines = plGroups[plNo] || [];
+        if (Array.isArray(rawData) && rawData.length > 0) {
+          masterList = rawData.map(r => ({
+            itemCode: String(r.itemCode || r.code || '').trim(),
+            mexDesign: String(r.mexDesign || r.item || '').trim(),
+            mexColor: String(r.mexColor || r.color || '').trim(),
+            mexSize: String(r.mexSize || r.size || '').trim(),
+            jpDesign: String(r.jpDesign || '').trim(),
+            jpColor: String(r.jpColor || '').trim(),
+            jpSize: String(r.jpSize || '').trim()
+          })).filter(m => m.itemCode);
 
-    for (let l = 0; l < plannedLines.length; l++) {
-      const plLine = plannedLines[l];
-      const master = masterMap[plLine.itemCode] || {
-        jpDesign: plLine.item || plLine.itemCode,
-        jpColor: plLine.color || '',
-        jpSize: plLine.size || ''
-      };
-
-      const mexNotation = (plLine.item || '') + ' / ' + (plLine.color || '') + ' / ' + (plLine.size || '');
-      const jpNotation = (master.jpDesign || '') + ' / ' + (master.jpColor || '') + ' / ' + (master.jpSize || '');
-
-      const key = plNo + '__' + plLine.itemCode;
-      const insp = inspectionMap[key];
-
-      let actualQtyVal = '';
-      let diffQtyVal = '';
-      let statusVal = '未検品';
-      let actualItemCodeVal = plLine.itemCode;
-      let actualItemNameVal = master.jpDesign;
-      let noteVal = '';
-      let workerVal = '';
-      let dateVal = '';
-      let isDiff = false;
-
-      if (insp) {
-        actualQtyVal = insp.actualQty;
-        diffQtyVal = insp.diffQty;
-        statusVal = insp.status;
-        noteVal = insp.note;
-        workerVal = insp.inspector;
-        dateVal = insp.timestamp;
-
-        if (insp.discrepancies && insp.discrepancies.length > 0) {
-          const sizeDisc = insp.discrepancies.find(function(d) { return d.reason === 'サイズ違い'; });
-          if (sizeDisc && sizeDisc.targetItemCode) {
-            actualItemCodeVal = sizeDisc.targetItemCode;
-            actualItemNameVal = (sizeDisc.targetItemName || '') + ' (' + (sizeDisc.targetSize || '') + ')';
+          const nowStr = new Date().toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          localStorage.setItem('inspection_master_items', JSON.stringify(masterList));
+          localStorage.setItem('inspection_master_updated_at', nowStr);
+          updateMasterBadge();
+          if (!isSilent) {
+            playBeep('success');
+            showToast(`商品マスタを更新しました（全${masterList.length}件）`);
           }
         }
+      } catch (err) {
+        if (!isSilent) showToast('マスタ取得エラー: ' + err.message);
+      }
+    }
 
-        if (diffQtyVal !== 0 || statusVal.indexOf('差異') !== -1 || statusVal.indexOf('超過') !== -1 || statusVal.indexOf('不足') !== -1) {
-          isDiff = true;
+    async function refreshPLDataFromGas(isSilent = false) {
+      if (!state.gasUrl) {
+        if (!isSilent) {
+          alert('GAS Web App URLが未設定です。');
+          openSettingsModal();
         }
+        return;
       }
 
-      const row = [
-        plNo,
-        plLine.itemCode,
-        master.jpDesign,
-        (master.jpColor || '') + ' ' + (master.jpSize || ''),
-        mexNotation,
-        plLine.planQty,
-        actualQtyVal,
-        diffQtyVal,
-        statusVal,
-        actualItemCodeVal,
-        actualItemNameVal,
-        noteVal,
-        workerVal,
-        dateVal
-      ];
-      outputRows.push(row);
+      try {
+        const plUrl = state.gasUrl.includes('?') ? `${state.gasUrl}&action=refreshPLData` : `${state.gasUrl}?action=refreshPLData`;
+        const pRes = await fetch(plUrl);
+        if (!pRes.ok) throw new Error(`HTTP ${pRes.status}`);
+        const pJson = await pRes.json();
+        if (pJson.status === 'success' && Array.isArray(pJson.data)) {
+          plProgress = pJson.data;
+          renderPLDashboard();
+          if (!isSilent) {
+            playBeep('success');
+            showToast(`PLデータを反映しました（未検: ${pJson.uncountedCount || 0}件）`);
+          }
+        }
+      } catch (err) {
+        if (!isSilent) showToast('PL反映エラー: ' + err.message);
+      }
+    }
 
-      const rowColors = [];
-      const rowBgs = [];
-      const rowWeights = [];
-      for (let c = 0; c < row.length; c++) {
-        if (isDiff) {
-          rowColors.push(RED_COLOR);
-          rowBgs.push(RED_BG);
-          rowWeights.push(c === 0 || c === 7 || c === 8 ? 'bold' : 'normal');
+    async function confirmPurgeAllPL() {
+      if (!state.gasUrl) {
+        alert('GAS Web App URLが未設定です。「⚙️ 設定」からURLを入力してください。');
+        openSettingsModal();
+        return;
+      }
+
+      if (!confirm('【警告】PLデータの全削除\n\n取り込んだすべてのPLデータを完全に削除します。\n\n本当に実行しますか？')) return;
+      if (!confirm('【最終確認】本当によろしいですか？\n\nこの操作は元に戻せません。')) return;
+
+      const btnP = document.getElementById('btn-card-pl-purge');
+      if (btnP) btnP.innerHTML = '<span>🗑️ 削除中...</span>';
+
+      try {
+        const url = state.gasUrl.includes('?') ? `${state.gasUrl}&action=purgeAllPL` : `${state.gasUrl}?action=purgeAllPL`;
+        const res = await fetch(url);
+        const json = await res.json();
+        if (json.status === 'success') {
+          playBeep('success');
+          alert('すべてのPLデータを削除しました。');
+          plProgress = [];
+          plItemsAll = [];
+          renderPLDashboard();
+        }
+      } catch (err) {
+        alert('通信エラー: ' + err.message);
+      } finally {
+        if (btnP) btnP.innerHTML = '<span>🗑️ PLデータ全削除</span>';
+      }
+    }
+
+    function playBeep(type = 'success') {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.frequency.setValueAtTime(type === 'success' ? 920 : 440, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
+      } catch (e) {}
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.className = 'fixed top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-xl transition-all duration-300 bg-emerald-600';
+      toast.style.opacity = '1';
+      toast.style.transform = 'translate(-50%, 0)';
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translate(-50%, -8px)';
+      }, 2400);
+    }
+
+    function updateWorkerHeader() {
+      document.getElementById('header-worker-label').textContent = `作業者: ${state.workerName} ✎`;
+      document.getElementById('setting-worker-input').value = state.workerName;
+      document.getElementById('worker-quick-input').value = state.workerName;
+      document.getElementById('setting-gas-url-input').value = state.gasUrl;
+    }
+
+    function renderPLDashboard() {
+      const grid = document.getElementById('pl-dashboard-grid');
+      grid.innerHTML = '';
+
+      if (plProgress.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-3 p-4 rounded-2xl bg-white border border-slate-200 text-center space-y-1 shadow-sm">
+            <div class="text-xs font-bold text-slate-800">検品予定のPLデータがまだありません</div>
+            <p class="text-[11px] text-slate-500">PL取込かテンキーで番号を入力してください。</p>
+          </div>
+        `;
+        return;
+      }
+
+      let allDone = plProgress.length > 0 && plProgress.every(p => p.isCompleted);
+      const banner = document.getElementById('all-completed-banner');
+      if (allDone) banner.classList.remove('hidden');
+      else banner.classList.add('hidden');
+
+      plProgress.forEach(p => {
+        const btn = document.createElement('button');
+        btn.onclick = () => selectPL(p.plNo);
+        btn.className = `p-3 rounded-2xl border text-left transition-all active:scale-95 flex flex-col justify-between h-20 ${
+          p.isCompleted ? 'bg-slate-100 border-slate-200 opacity-60' : 'bg-white border-slate-300 hover:border-emerald-500 shadow-sm'
+        }`;
+        btn.innerHTML = `
+          <div class="flex items-center justify-between w-full">
+            <span class="font-mono text-xs font-black text-slate-900">PL ${p.plNo}</span>
+            ${p.isCompleted ? '<span class="text-[10px] text-emerald-700 font-bold bg-emerald-100 px-1.5 py-0.5 rounded">✓ 済</span>' : '<span class="text-[10px] text-sky-700 font-bold bg-sky-100 px-1.5 py-0.5 rounded">未検</span>'}
+          </div>
+          <div class="text-[11px] text-slate-600 mt-1 font-medium">
+            ${p.isCompleted ? `担当: ${p.inspectorName || '完了'}` : `${p.totalLines}品目 / 計${p.totalPlanQty}点`}
+          </div>
+        `;
+        grid.appendChild(btn);
+      });
+    }
+
+    function pressPlKeypad(digit) {
+      if (state.plKeypadBuffer.length < 8) state.plKeypadBuffer += digit;
+      updatePlKeypadDisplay();
+    }
+
+    function clearPlKeypad() {
+      state.plKeypadBuffer = '';
+      updatePlKeypadDisplay();
+    }
+
+    function backspacePlKeypad() {
+      state.plKeypadBuffer = state.plKeypadBuffer.slice(0, -1);
+      updatePlKeypadDisplay();
+    }
+
+    function updatePlKeypadDisplay() {
+      const el = document.getElementById('pl-keypad-display');
+      if (state.plKeypadBuffer) {
+        el.textContent = state.plKeypadBuffer;
+        el.className = 'text-3xl font-black font-mono tracking-widest text-amber-600';
+      } else {
+        el.textContent = 'PL番号を入力';
+        el.className = 'text-3xl font-black font-mono tracking-widest text-slate-400';
+      }
+    }
+
+    function confirmPlKeypad() {
+      if (!state.plKeypadBuffer) {
+        alert('PL番号を入力してください。');
+        return;
+      }
+      selectPL(state.plKeypadBuffer);
+    }
+
+    async function selectPL(plNo) {
+      const plClean = String(plNo).trim();
+      const prog = plProgress.find(p => p.plNo === plClean);
+      if (prog && prog.isCompleted) {
+        if (!confirm(`PL「${plClean}」は既に検品完了として記録されています。再度検品しますか？`)) return;
+      }
+
+      let lines = plItemsAll.filter(p => p.plNo === plClean);
+      if (lines.length === 0 && state.gasUrl) {
+        showToast(`スプレッドシートからPL「${plClean}」を照会中...`);
+        try {
+          const endpoint = state.gasUrl.includes('?') ? `${state.gasUrl}&action=getPLDetails&plNo=${encodeURIComponent(plClean)}` : `${state.gasUrl}?action=getPLDetails&plNo=${encodeURIComponent(plClean)}`;
+          const res = await fetch(endpoint);
+          if (res.ok) {
+            const json = await res.json();
+            const list = json.data || [];
+            if (Array.isArray(list) && list.length > 0) {
+              lines = list.map(d => ({
+                itemCode: d.itemCode,
+                plNo: plClean,
+                item: d.mexDesign,
+                color: d.mexColor,
+                size: d.mexSize,
+                qty: d.planQty,
+                palletNo: d.palletNo || ''
+              }));
+              plItemsAll = [...plItemsAll.filter(x => x.plNo !== plClean), ...lines];
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (lines.length === 0) {
+        alert(`PL番号「${plClean}」に該当するデータが見つかりませんでした。`);
+        return;
+      }
+
+      const masterMap = {};
+      masterList.forEach(m => { masterMap[m.itemCode] = m; });
+
+      state.selectedPL = plClean;
+      state.currentInspectionItems = lines.map((line, idx) => {
+        const m = masterMap[line.itemCode];
+        return {
+          id: `insp-${plClean}-${idx}-${Date.now()}`,
+          itemCode: line.itemCode,
+          plNo: plClean,
+          mexDesign: m ? m.mexDesign : (line.item || 'MERCADO ITEM'),
+          mexColor: m ? m.mexColor : (line.color || ''),
+          mexSize: m ? m.mexSize : (line.size || ''),
+          jpDesign: m ? m.jpDesign : `未登録品 (${line.itemCode})`,
+          jpColor: m ? m.jpColor : (line.color || ''),
+          jpSize: m ? m.jpSize : (line.size || ''),
+          planQty: line.qty,
+          actualQty: null,
+          diffQty: 0,
+          isConfirmed: false,
+          hasException: false,
+          exceptionType: 'normal',
+          exceptionNote: '',
+          discrepancies: []
+        };
+      });
+
+      state.plKeypadBuffer = '';
+      updatePlKeypadDisplay();
+      switchToView('inspecting');
+      showToast(`PL「${plClean}」の検品を開始します`);
+    }
+
+    function switchToView(viewName) {
+      state.currentScreen = viewName;
+      document.getElementById('view-pl-entry').classList.add('hidden');
+      document.getElementById('view-inspecting').classList.add('hidden');
+      document.getElementById('view-confirm').classList.add('hidden');
+
+      const backBtn = document.getElementById('btn-header-back');
+      const brandLogo = document.getElementById('header-brand-logo');
+      const plSep = document.getElementById('header-pl-sep');
+      const plBadge = document.getElementById('header-pl-badge');
+
+      if (viewName === 'pl_entry') {
+        document.getElementById('view-pl-entry').classList.remove('hidden');
+        backBtn.classList.add('hidden');
+        brandLogo.classList.remove('hidden');
+        plSep.classList.add('hidden');
+        plBadge.classList.add('hidden');
+      } else if (viewName === 'inspecting') {
+        document.getElementById('view-inspecting').classList.remove('hidden');
+        backBtn.classList.remove('hidden');
+        brandLogo.classList.add('hidden');
+        plSep.classList.remove('hidden');
+        plBadge.classList.remove('hidden');
+        plBadge.textContent = `PL: ${state.selectedPL}`;
+        renderInspectionCards();
+      } else if (viewName === 'confirm') {
+        document.getElementById('view-confirm').classList.remove('hidden');
+        renderConfirmItems();
+      }
+    }
+
+    function onHeaderBackClick() {
+      if (state.currentScreen !== 'pl_entry') {
+        if (confirm('検品途中のデータを破棄してPL選択画面に戻りますか？')) {
+          switchToView('pl_entry');
+        }
+      }
+    }
+
+    function renderInspectionCards() {
+      const container = document.getElementById('inspection-cards-container');
+      container.innerHTML = '';
+
+      document.getElementById('inspect-pl-label').textContent = `PL ${state.selectedPL}`;
+
+      const confirmedCount = state.currentInspectionItems.filter(i => i.isConfirmed).length;
+      document.getElementById('inspect-progress-label').textContent = `${confirmedCount} / ${state.currentInspectionItems.length} 品目完了`;
+
+      const allDone = state.currentInspectionItems.length > 0 && confirmedCount === state.currentInspectionItems.length;
+      const confirmBtn = document.getElementById('btn-goto-confirm');
+      const hint = document.getElementById('confirm-hint-text');
+
+      if (allDone) {
+        confirmBtn.disabled = false;
+        confirmBtn.className = 'w-full py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 transition-all shadow-md bg-emerald-600 hover:bg-emerald-500 text-white active:scale-95 cursor-pointer';
+        hint.classList.add('hidden');
+      } else {
+        confirmBtn.disabled = true;
+        confirmBtn.className = 'w-full py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 transition-all shadow-sm bg-slate-200 text-slate-400 cursor-not-allowed';
+        hint.classList.remove('hidden');
+      }
+
+      state.currentInspectionItems.forEach((item, idx) => {
+        const isMatch = item.isConfirmed && item.actualQty === item.planQty && !item.hasException;
+        const isDiff = item.isConfirmed && (item.actualQty !== item.planQty || item.hasException);
+
+        const card = document.createElement('div');
+        card.className = `p-4 rounded-2xl border transition-all shadow-sm ${
+          isMatch ? 'border-emerald-400 bg-emerald-50/60' : (isDiff ? 'border-amber-400 bg-amber-50/60' : 'border-slate-300 bg-white')
+        }`;
+
+        card.innerHTML = `
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+              ${item.itemCode}
+            </span>
+            ${isMatch ? '<span class="text-xs font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2.5 py-1 rounded-lg">✓ 一致 (OK)</span>' : ''}
+            ${isDiff ? `<span class="text-xs font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2.5 py-1 rounded-lg">差異 (${item.diffQty > 0 ? '+' + item.diffQty : item.diffQty})</span>` : ''}
+            ${!item.isConfirmed ? '<span class="text-xs text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg font-bold">未検品</span>' : ''}
+          </div>
+
+          <div class="space-y-1.5 mb-3">
+            <div>
+              <div class="text-[11px] text-emerald-700 font-extrabold uppercase tracking-wide">日本名・カラー・サイズ</div>
+              <h4 class="text-lg font-black text-slate-900 leading-snug">${item.jpDesign}</h4>
+              <div class="text-xs font-bold text-slate-700 flex items-center gap-2.5 mt-0.5">
+                <span>色: ${item.jpColor || '設定なし'}</span>
+                <span>·</span>
+                <span class="text-amber-800 font-extrabold text-sm">サイズ: ${item.jpSize || 'FREE'}</span>
+              </div>
+            </div>
+
+            <div class="pt-1.5 border-t border-slate-200 text-xs text-slate-500 font-mono">
+              <span class="text-[10px] text-slate-400 block font-sans">メキシコ表記 (Item / color / S)</span>
+              <div class="text-slate-700">${item.mexDesign} · ${item.mexColor} · <strong class="text-slate-900">${item.mexSize}</strong></div>
+            </div>
+
+            ${item.hasException && item.exceptionNote ? `
+              <div class="p-2 rounded-xl bg-amber-100/70 border border-amber-300 text-xs text-amber-900 mt-1.5 flex items-start gap-1.5 font-bold">
+                <span>⚠️</span><span>${item.exceptionNote}</span>
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="pt-3 border-t border-slate-200 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <div>
+                <span class="text-[11px] text-slate-500 block leading-tight font-bold">仕入予定数</span>
+                <div class="text-2xl font-black font-mono text-slate-900">${item.planQty}</div>
+              </div>
+              <div>
+                <span class="text-[11px] text-amber-700 block leading-tight font-bold">手入力実数</span>
+                <input
+                  type="number"
+                  inputmode="numeric"
+                  value="${item.actualQty !== null && item.actualQty !== undefined ? item.actualQty : ''}"
+                  placeholder="実数"
+                  oninput="handleCardDirectQty(${idx}, this.value)"
+                  class="w-16 bg-white border-2 border-slate-300 focus:border-amber-500 rounded-xl py-1.5 px-2 text-center font-mono font-black text-amber-700 text-lg shadow-inner"
+                />
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <button onclick="openDiscrepancyModal(${idx})" class="px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-xs font-bold text-amber-800 border border-slate-300">
+                ${item.hasException ? '差異編集' : '差異手入力'}
+              </button>
+              <button onclick="confirmItemMatch(${idx})" class="px-5 py-2.5 rounded-xl text-sm font-black transition-all active:scale-95 shadow-md flex items-center gap-1.5 ${
+                isMatch ? 'bg-emerald-600 text-white shadow-emerald-200' : 'bg-emerald-500 hover:bg-emerald-400 text-white'
+              }">
+                <span>✓ 一致</span>
+              </button>
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function confirmItemMatch(index) {
+      const it = state.currentInspectionItems[index];
+      if (!it) return;
+      it.actualQty = it.planQty;
+      it.diffQty = 0;
+      it.isConfirmed = true;
+      it.hasException = false;
+      it.exceptionType = 'normal';
+      it.exceptionNote = '';
+      it.discrepancies = [];
+      playBeep('success');
+      renderInspectionCards();
+    }
+
+    function handleCardDirectQty(idx, valStr) {
+      const it = state.currentInspectionItems[idx];
+      if (!it) return;
+      const cleanStr = (valStr || '').trim();
+      if (cleanStr === '') {
+        it.actualQty = null;
+        it.isConfirmed = false;
+        it.hasException = false;
+        it.discrepancies = [];
+        return;
+      }
+      const val = Number(cleanStr);
+      if (val === it.planQty) {
+        confirmItemMatch(idx);
+      } else {
+        openDiscrepancyModal(idx, val);
+      }
+    }
+
+    function openDiscrepancyModal(itemIndex, initialQty) {
+      state.targetItemIndex = itemIndex;
+      const it = state.currentInspectionItems[itemIndex];
+      if (!it) return;
+
+      document.getElementById('disc-modal-code').textContent = it.itemCode;
+      document.getElementById('disc-modal-title').textContent = it.jpDesign;
+      document.getElementById('disc-modal-plan-qty').textContent = it.planQty;
+
+      if (Array.isArray(it.discrepancies) && it.discrepancies.length > 0) {
+        state.activeDiscrepancies = JSON.parse(JSON.stringify(it.discrepancies));
+      } else if (initialQty !== undefined && initialQty !== null) {
+        state.activeDiscrepancies = [
+          { reason: '数量過不足', qty: initialQty, targetItemCode: '', targetItemName: '', targetSize: '', note: '' }
+        ];
+      } else {
+        state.activeDiscrepancies = [
+          { reason: '数量過不足', qty: '', targetItemCode: '', targetItemName: '', targetSize: '', note: '' }
+        ];
+      }
+
+      renderDiscrepancyRows();
+      updateDiscrepancyCalculations();
+      document.getElementById('modal-exception').classList.remove('hidden');
+    }
+
+    function closeDiscrepancyModal() {
+      document.getElementById('modal-exception').classList.add('hidden');
+    }
+
+    function addDiscrepancyRow() {
+      state.activeDiscrepancies.push({
+        reason: '数量過不足',
+        qty: '',
+        targetItemCode: '',
+        targetItemName: '',
+        targetSize: '',
+        note: ''
+      });
+      renderDiscrepancyRows();
+      updateDiscrepancyCalculations();
+    }
+
+    function removeDiscrepancyRow(rIdx) {
+      if (state.activeDiscrepancies.length <= 1) return;
+      state.activeDiscrepancies.splice(rIdx, 1);
+      renderDiscrepancyRows();
+      updateDiscrepancyCalculations();
+    }
+
+    function onDiscrepancyReasonChange(rIdx, newReason) {
+      const row = state.activeDiscrepancies[rIdx];
+      if (!row) return;
+      row.reason = newReason;
+      if (newReason === '数量過不足') {
+        row.targetItemCode = '';
+        row.targetItemName = '';
+        row.targetSize = '';
+      }
+      renderDiscrepancyRows();
+      updateDiscrepancyCalculations();
+    }
+
+    function onDiscrepancyQtyChange(rIdx, val) {
+      const row = state.activeDiscrepancies[rIdx];
+      if (!row) return;
+      row.qty = val === '' ? '' : Number(val);
+      updateDiscrepancyCalculations();
+    }
+
+    function onDiscrepancyNoteChange(rIdx, val) {
+      const row = state.activeDiscrepancies[rIdx];
+      if (!row) return;
+      row.note = val;
+    }
+
+    function renderDiscrepancyRows() {
+      const container = document.getElementById('discrepancy-rows-container');
+      container.innerHTML = '';
+
+      state.activeDiscrepancies.forEach((disc, rIdx) => {
+        const card = document.createElement('div');
+        card.className = 'p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5';
+
+        let detailHtml = '';
+        if (disc.reason === '数量過不足') {
+          detailHtml = `
+            <div>
+              <label class="block text-xs text-slate-700 font-bold mb-1">実数</label>
+              <input type="number" inputmode="numeric" value="${disc.qty !== '' ? disc.qty : ''}" placeholder="実際の数量" oninput="onDiscrepancyQtyChange(${rIdx}, this.value)" class="w-full bg-white border border-amber-400 rounded-xl px-3 py-2 text-sm font-bold font-mono text-slate-900">
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-500 mb-1">特記事項</label>
+              <input type="text" value="${disc.note || ''}" placeholder="例: 1箱未納" oninput="onDiscrepancyNoteChange(${rIdx}, this.value)" class="w-full bg-white border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs">
+            </div>
+          `;
         } else {
-          rowColors.push(DEFAULT_TEXT);
-          rowBgs.push(DEFAULT_BG);
-          rowWeights.push('normal');
+          const isSize = disc.reason === 'サイズ違い';
+          const labelText = isSize ? '正しいサイズ・商品を選択' : '混入した別商品を選択';
+          detailHtml = `
+            <div>
+              <label class="block text-xs text-purple-800 font-bold mb-1">${labelText}</label>
+              ${disc.targetItemCode ? `
+                <div class="p-2.5 bg-purple-50 border border-purple-200 rounded-xl mb-1.5 flex items-center justify-between">
+                  <div class="truncate text-xs">
+                    <div class="font-bold text-slate-900">${disc.targetItemName}</div>
+                    <div class="text-[11px] text-purple-700 font-mono">${disc.targetItemCode} · ${disc.targetSize}</div>
+                  </div>
+                  <button type="button" onclick="openSearchMasterModal(${rIdx})" class="px-2 py-1 bg-purple-600 text-white text-[10px] font-bold rounded-lg shrink-0">変更</button>
+                </div>
+              ` : `
+                <button type="button" onclick="openSearchMasterModal(${rIdx})" class="w-full py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-800 text-xs font-bold rounded-xl border border-dashed border-purple-300 flex items-center justify-center gap-1">
+                  <span>🔍 商品マスタ検索・新規登録</span>
+                </button>
+              `}
+            </div>
+            <div>
+              <label class="block text-xs text-slate-700 font-bold mb-1">該当数量（点）</label>
+              <input type="number" inputmode="numeric" value="${disc.qty !== '' ? disc.qty : ''}" placeholder="点数" oninput="onDiscrepancyQtyChange(${rIdx}, this.value)" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm font-bold font-mono text-slate-900">
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-500 mb-1">理由</label>
+              <input type="text" value="${disc.note || ''}" placeholder="例: 混在" oninput="onDiscrepancyNoteChange(${rIdx}, this.value)" class="w-full bg-white border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs">
+            </div>
+          `;
         }
-      }
-      fontColors.push(rowColors);
-      bgColors.push(rowBgs);
-      fontWeights.push(rowWeights);
+
+        card.innerHTML = `
+          <div class="flex items-center justify-between pb-1.5 border-b border-slate-200">
+            <span class="text-xs font-bold text-slate-700">内訳 #${rIdx + 1}</span>
+            ${state.activeDiscrepancies.length > 1 ? `<button type="button" onclick="removeDiscrepancyRow(${rIdx})" class="text-xs text-rose-600 font-bold">✕ 削除</button>` : ''}
+          </div>
+          <div>
+            <label class="block text-[11px] text-slate-600 font-bold mb-1">差異要因</label>
+            <select onchange="onDiscrepancyReasonChange(${rIdx}, this.value)" class="w-full bg-white border border-slate-300 rounded-xl px-2.5 py-2 text-slate-900 font-bold text-xs">
+              <option value="数量過不足" ${disc.reason === '数量過不足' ? 'selected' : ''}>数量過不足</option>
+              <option value="サイズ違い" ${disc.reason === 'サイズ違い' ? 'selected' : ''}>サイズ違い</option>
+              <option value="商品違い" ${disc.reason === '商品違い' ? 'selected' : ''}>商品違い</option>
+            </select>
+          </div>
+          ${detailHtml}
+        `;
+        container.appendChild(card);
+      });
     }
 
-    const mixedList = mixedItemsByPL[plNo] || [];
-    for (let m = 0; m < mixedList.length; m++) {
-      const mixed = mixedList[m];
-      const mixedRow = [
-        plNo,
-        '',
-        '',
-        '',
-        '',
-        '',
-        mixed.qty,
-        '+' + mixed.qty,
-        '差異: 商品違い(混入)',
-        mixed.targetItemCode,
-        mixed.targetItemName + (mixed.targetSize ? ' (' + mixed.targetSize + ')' : ''),
-        '【商品違い混入】' + (mixed.note ? ' [' + mixed.note + ']' : ''),
-        mixed.inspector,
-        mixed.timestamp
-      ];
-      outputRows.push(mixedRow);
-
-      const mixedColors = [];
-      const mixedBgs = [];
-      const mixedWeights = [];
-      for (let c = 0; c < mixedRow.length; c++) {
-        mixedColors.push(RED_COLOR);
-        mixedBgs.push('#fee2e2');
-        mixedWeights.push('bold');
-      }
-      fontColors.push(mixedColors);
-      bgColors.push(mixedBgs);
-      fontWeights.push(mixedWeights);
+    function updateDiscrepancyCalculations() {
+      const it = state.currentInspectionItems[state.targetItemIndex];
+      if (!it) return;
+      const hasDirect = state.activeDiscrepancies.some(d => d.reason === '数量過不足' && d.qty !== '' && Number(d.qty) >= 0);
+      let calcTotal = hasDirect ? Number(state.activeDiscrepancies.find(d => d.reason === '数量過不足').qty) : state.activeDiscrepancies.reduce((sum, d) => sum + (Number(d.qty) || 0), 0);
+      const diff = calcTotal - it.planQty;
+      document.getElementById('disc-modal-total-calc').textContent = `実数: ${calcTotal} 点`;
+      document.getElementById('disc-modal-diff-calc').textContent = `(予定比: ${diff > 0 ? '+' + diff : diff})`;
     }
-  }
 
-  diffSheet.clear();
-  const headers = [ 'PL番号', '商品コード(予定)', '日本品名(予定)', 'カラー/サイズ(予定)', 'メキシコ表記(予定)', '予定数量', '検品実績数', '差異数量', '判定ステータス', '商品コード(実績/混入)', '品名・サイズ(実績/混入)', '差異内訳・理由メモ', '作業者氏名', '検品日時' ];
-  diffSheet.appendRow(headers);
-  diffSheet.getRange(1, 1, 1, headers.length)
-    .setBackground('#0f172a')
-    .setFontColor('#ffffff')
-    .setFontWeight('bold')
-    .setHorizontalAlignment('center');
-  diffSheet.setFrozenRows(1);
+    function saveDiscrepanciesModal() {
+      const idx = state.targetItemIndex;
+      const it = state.currentInspectionItems[idx];
+      if (!it) return;
+      const validRows = state.activeDiscrepancies.filter(d => d.qty !== '' && Number(d.qty) >= 0);
+      if (validRows.length === 0) {
+        alert('少なくとも1つの内訳で数量を入力してください。');
+        return;
+      }
+      let calcTotal = state.activeDiscrepancies.some(d => d.reason === '数量過不足' && d.qty !== '') ? Number(state.activeDiscrepancies.find(d => d.reason === '数量過不足').qty) : state.activeDiscrepancies.reduce((s, d) => s + (Number(d.qty) || 0), 0);
+      
+      it.actualQty = calcTotal;
+      it.diffQty = calcTotal - it.planQty;
+      it.hasException = true;
+      it.isConfirmed = true;
+      it.discrepancies = JSON.parse(JSON.stringify(state.activeDiscrepancies));
 
-  if (outputRows.length > 0) {
-    const dataRange = diffSheet.getRange(2, 1, outputRows.length, headers.length);
-    dataRange.setValues(outputRows);
-    dataRange.setFontColors(fontColors);
-    dataRange.setBackgrounds(bgColors);
-    dataRange.setFontWeights(fontWeights);
+      const noteParts = state.activeDiscrepancies.map(d => `【${d.reason}】${d.targetItemCode ? d.targetItemCode + ' ' : ''}${d.qty}点`);
+      it.exceptionNote = noteParts.join(' / ');
 
-    diffSheet.getRange(2, 6, outputRows.length, 3).setHorizontalAlignment('right');
-    diffSheet.getRange(2, 1, outputRows.length, 1).setHorizontalAlignment('center');
-    diffSheet.getRange(2, 9, outputRows.length, 1).setHorizontalAlignment('center');
-  }
+      closeDiscrepancyModal();
+      showToast('差異内容を記録しました');
+      renderInspectionCards();
+    }
 
-  return { status: 'success', rowCount: outputRows.length, message: '「仕入カウント差異確認」シートを更新しました（全 ' + outputRows.length + ' 行）。' };
-}
+    // 課題A対策: 商品マスタにない新商品をその場で登録・紐づけする関数
+    function registerAndSelectCustomItem() {
+      const code = document.getElementById('new-item-code-input').value.trim();
+      const name = document.getElementById('new-item-name-input').value.trim();
+      const size = document.getElementById('new-item-size-input').value.trim() || 'FREE';
 
-/**
- * 全シートの自動初期セットアップ
- */
-function setupAllSheets() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+      if (!code || !name) {
+        alert('商品コードと商品名を入力してください。');
+        return;
+      }
 
-  let mSheet = ss.getSheetByName(SHEET_NAMES.MASTER);
-  if (!mSheet) {
-    mSheet = ss.insertSheet(SHEET_NAMES.MASTER);
-    mSheet.appendRow(['商品コード', 'メキシコデザイン名', 'メキシコカラー', 'メキシコサイズ', '日本デザイン名', '日本カラー', '日本サイズ']);
-    mSheet.getRange(1, 1, 1, 7).setBackground('#0f172a').setFontColor('#ffffff').setFontWeight('bold');
-    mSheet.setFrozenRows(1);
-  }
+      const newMasterItem = { itemCode: code, mexDesign: name, mexColor: '', mexSize: size, jpDesign: name, jpColor: '', jpSize: size };
+      masterList.push(newMasterItem);
+      localStorage.setItem('inspection_master_items', JSON.stringify(masterList));
+      updateMasterBadge();
 
-  let impSheet = ss.getSheetByName(SHEET_NAMES.PL_IMPORT);
-  if (!impSheet) {
-    impSheet = ss.insertSheet(SHEET_NAMES.PL_IMPORT);
-    impSheet.appendRow(['商品コード', 'PL番号/ID', 'Item', 'description', 'color', 'S', 'pallet', 'carton', 'qty', '取込ステータス']);
-    impSheet.getRange(1, 1, 1, 10).setBackground('#0f172a').setFontColor('#ffffff').setFontWeight('bold');
-    impSheet.setFrozenRows(1);
-  }
+      const rIdx = state.activeDiscrepancyRowIndex;
+      if (rIdx >= 0 && state.activeDiscrepancies[rIdx]) {
+        state.activeDiscrepancies[rIdx].targetItemCode = code;
+        state.activeDiscrepancies[rIdx].targetItemName = name;
+        state.activeDiscrepancies[rIdx].targetSize = size;
+      }
+      closeSearchMasterModal();
+      renderDiscrepancyRows();
+      showToast('未登録商品を新規作成して選択しました');
+    }
 
-  let countSheet = ss.getSheetByName(SHEET_NAMES.COUNT);
-  if (!countSheet) {
-    countSheet = ss.insertSheet(SHEET_NAMES.COUNT);
-    countSheet.appendRow([ '検品日時', '作業者氏名', 'PL番号', '商品コード', 'メキシコ表記(Item / color / S)', '日本表記(品名 / 色 / サイズ)', '予定数量', '検品実績数', '差異数量', '判定ステータス', '例外報告内容・メモ', 'セッションID', '差異詳細JSON' ]);
-    countSheet.getRange(1, 1, 1, 13).setBackground('#0f172a').setFontColor('#ffffff').setFontWeight('bold');
-    countSheet.setFrozenRows(1);
-  }
+    function openSearchMasterModal(rIdx) {
+      state.activeDiscrepancyRowIndex = rIdx;
+      document.getElementById('master-search-input').value = '';
+      document.getElementById('new-item-code-input').value = '';
+      document.getElementById('new-item-name-input').value = '';
+      document.getElementById('new-item-size-input').value = '';
+      filterMasterSearch('');
+      document.getElementById('modal-search-master').classList.remove('hidden');
+    }
 
-  let diffSheet = ss.getSheetByName(SHEET_NAMES.DIFF_CHECK);
-  if (!diffSheet) {
-    diffSheet = ss.insertSheet(SHEET_NAMES.DIFF_CHECK);
-    diffSheet.appendRow([ 'PL番号', '商品コード(予定)', '日本品名(予定)', 'カラー/サイズ(予定)', 'メキシコ表記(予定)', '予定数量', '検品実績数', '差異数量', '判定ステータス', '商品コード(実績/混入)', '品名・サイズ(実績/混入)', '差異内訳・理由メモ', '作業者氏Name', '検品日時' ]);
-    diffSheet.getRange(1, 1, 1, 14).setBackground('#0f172a').setFontColor('#ffffff').setFontWeight('bold');
-    diffSheet.setFrozenRows(1);
-  }
+    function closeSearchMasterModal() {
+      document.getElementById('modal-search-master').classList.add('hidden');
+    }
 
-  try {
-    SpreadsheetApp.getUi().alert('初期セットアップが完了しました。');
-  } catch (e) {}
-}
+    function filterMasterSearch(query) {
+      const q = (query || '').toLowerCase().trim();
+      const container = document.getElementById('master-search-results');
+      container.innerHTML = '';
 
-function formatDate(date) {
-  return Utilities.formatDate(date, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-}
+      const filtered = masterList.filter(m => !q || m.itemCode.toLowerCase().includes(q) || (m.jpDesign && m.jpDesign.toLowerCase().includes(q)));
+      if (filtered.length === 0) {
+        container.innerHTML = '<div class="text-center py-3 text-xs text-slate-500">該当マスタなし。上の「新規作成」をご利用ください。</div>';
+        return;
+      }
 
-function createJsonResponse(data) {
-  const output = ContentService.createTextOutput(JSON.stringify(data));
-  output.setMimeType(ContentService.MimeType.JSON);
-  return output;
-}
+      filtered.forEach(m => {
+        const itemCard = document.createElement('button');
+        itemCard.type = 'button';
+        itemCard.className = 'w-full text-left p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex flex-col gap-0.5';
+        itemCard.onclick = () => selectMasterItem(m.itemCode);
+        itemCard.innerHTML = `
+          <div class="flex items-center justify-between text-xs font-bold text-slate-900">
+            <span class="truncate">${m.jpDesign}</span>
+            <span class="text-amber-700 font-mono text-xs">${m.jpSize || ''}</span>
+          </div>
+          <div class="text-[11px] text-slate-500 font-mono">${m.itemCode}</div>
+        `;
+        container.appendChild(itemCard);
+      });
+    }
+
+    function selectMasterItem(itemCode) {
+      const m = masterList.find(x => x.itemCode === itemCode);
+      const rIdx = state.activeDiscrepancyRowIndex;
+      if (m && rIdx >= 0 && state.activeDiscrepancies[rIdx]) {
+        state.activeDiscrepancies[rIdx].targetItemCode = m.itemCode;
+        state.activeDiscrepancies[rIdx].targetItemName = m.jpDesign;
+        state.activeDiscrepancies[rIdx].targetSize = m.jpSize;
+      }
+      closeSearchMasterModal();
+      renderDiscrepancyRows();
+    }
+
+    function goToConfirmScreen() { switchToView('confirm'); }
+    function backToInspectionScreen() { switchToView('inspecting'); }
+
+    function renderConfirmItems() {
+      document.getElementById('confirm-pl-sub').textContent = `PL ${state.selectedPL} の検品結果プレビュー`;
+      document.getElementById('confirm-worker-name').textContent = state.workerName;
+      document.getElementById('confirm-total-items-badge').textContent = `全 ${state.currentInspectionItems.length} 品目`;
+
+      const container = document.getElementById('confirm-items-container');
+      container.innerHTML = '';
+
+      state.currentInspectionItems.forEach(it => {
+        const isMatch = it.actualQty === it.planQty && !it.hasException;
+        const diff = (it.actualQty || 0) - it.planQty;
+
+        const row = document.createElement('div');
+        row.className = `p-3 rounded-xl border text-xs flex items-center justify-between shadow-sm ${isMatch ? 'bg-emerald-50/50 border-emerald-300' : 'bg-amber-50/50 border-amber-300'}`;
+        row.innerHTML = `
+          <div class="flex-1 min-w-0 pr-2">
+            <div class="font-bold text-slate-900 text-sm truncate">${it.jpDesign}</div>
+            <div class="text-[11px] text-slate-500 font-mono">${it.itemCode} · ${it.jpSize}</div>
+            ${it.hasException && it.exceptionNote ? `<div class="text-[11px] text-amber-800 font-bold mt-0.5 truncate">⚠️ ${it.exceptionNote}</div>` : ''}
+          </div>
+          <div class="text-right shrink-0">
+            <div class="font-mono text-sm"><span class="text-slate-500">${it.planQty} ➔ </span><strong class="${isMatch ? 'text-emerald-700' : 'text-amber-700'} font-black text-base">${it.actualQty}</strong></div>
+          </div>
+        `;
+        container.appendChild(row);
+      });
+    }
+
+    // 課題D対策: 送信ボタンの物理的二重クリック完全ブロック（disabled = true）
+    async function submitInspectionData() {
+      const btn = document.getElementById('btn-final-submit');
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.innerHTML = '<span>送信中...</span>';
+
+      const payload = {
+        action: 'submitInspection',
+        sessionId: 'SES-' + Date.now(),
+        inspectorName: state.workerName,
+        plNo: state.selectedPL,
+        items: state.currentInspectionItems,
+        timestamp: new Date().toISOString()
+      };
+
+      try {
+        if (state.gasUrl && state.isOnline) {
+          const res = await fetch(state.gasUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(payload)
+          });
+          const json = await res.json();
+          if (json.status !== 'success') throw new Error(json.message);
+        } else {
+          throw new Error('オフラインまたはURL未設定');
+        }
+
+        playBeep('success');
+        showToast(`PL「${state.selectedPL}」の検品完了を記録しました！`);
+
+        const completedPL = state.selectedPL;
+        plProgress.forEach(p => { if (p.plNo === completedPL) { p.isCompleted = true; p.inspectorName = state.workerName; } });
+
+        renderPLDashboard();
+        switchToView('pl_entry');
+        state.selectedPL = '';
+        state.currentInspectionItems = [];
+
+      } catch (err) {
+        state.pendingQueue.push(payload);
+        localStorage.setItem('inspection_pending_queue', JSON.stringify(state.pendingQueue));
+        updatePendingBadge();
+        alert('通信エラーまたはオフラインのため、データを一時保存しました。');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span>検品結果を送信して完了する</span>';
+      }
+    }
+
+    async function processPendingQueueSilently() {
+      if (state.pendingQueue.length === 0 || !state.gasUrl) return;
+      const queueCopy = [...state.pendingQueue];
+      for (const payload of queueCopy) {
+        try {
+          const res = await fetch(state.gasUrl, { method: 'POST', body: JSON.stringify(payload) });
+          const json = await res.json();
+          if (json.status === 'success') {
+            state.pendingQueue.shift();
+            localStorage.setItem('inspection_pending_queue', JSON.stringify(state.pendingQueue));
+            updatePendingBadge();
+          }
+        } catch (e) { break; }
+      }
+      if (state.pendingQueue.length === 0) showToast('未送信データの再送が完了しました');
+    }
+
+    function openImporterModal() { document.getElementById('modal-importer').classList.remove('hidden'); }
+    function closeImporterModal() { document.getElementById('modal-importer').classList.add('hidden'); }
+    function clearImporterText() { document.getElementById('importer-textarea').value = ''; }
+
+    function executeParseImporter() {
+      const text = document.getElementById('importer-textarea').value.trim();
+      if (!text) return;
+      const lines = text.split(/\r?\n/);
+      const newItems = [];
+      const plNumbers = new Set();
+
+      lines.forEach(l => {
+        const cols = l.includes('\t') ? l.split('\t') : l.split(',');
+        if (cols.length >= 3) {
+          const itemCode = cols[0].trim();
+          const plNo = cols[1].trim();
+          const item = cols[2].trim();
+          const color = cols[4] ? cols[4].trim() : '';
+          const size = cols[5] ? cols[5].trim() : '';
+          const qty = Number(cols[cols.length - 1]?.replace(/[^0-9]/g, '')) || 0;
+          if (itemCode && plNo) {
+            newItems.push({ itemCode, plNo, item, color, size, qty });
+            plNumbers.add(plNo);
+          }
+        }
+      });
+
+      if (newItems.length > 0) {
+        plItemsAll = [...plItemsAll, ...newItems];
+        plNumbers.forEach(pl => {
+          if (!plProgress.some(p => p.plNo === pl)) {
+            const linesForPL = newItems.filter(i => i.plNo === pl);
+            plProgress.push({ plNo: pl, totalLines: linesForPL.length, totalPlanQty: linesForPL.reduce((s, i) => s + i.qty, 0), isCompleted: false });
+          }
+        });
+        renderPLDashboard();
+        showToast('PLデータを取り込みました');
+      }
+    }
+
+    function openSettingsModal() {
+      document.getElementById('setting-worker-input').value = state.workerName;
+      document.getElementById('setting-gas-url-input').value = state.gasUrl;
+      document.getElementById('modal-settings').classList.remove('hidden');
+    }
+    function closeSettingsModal() { document.getElementById('modal-settings').classList.add('hidden'); }
+    async function pasteGasUrlFromClipboard() {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) document.getElementById('setting-gas-url-input').value = text.trim();
+      } catch (e) {}
+    }
+
+    async function testGasUrlConnection() {
+      const url = document.getElementById('setting-gas-url-input').value.trim();
+      const msgBox = document.getElementById('gas-test-msg');
+      msgBox.classList.remove('hidden');
+      if (!url) { msgBox.textContent = 'URLを入力してください'; return; }
+      try {
+        const res = await fetch(url.includes('?') ? `${url}&action=ping` : `${url}?action=ping`);
+        const json = await res.json();
+        if (json.status === 'success') { msgBox.textContent = '✓ 接続成功'; playBeep('success'); }
+      } catch (err) { msgBox.textContent = '✕ 失敗: ' + err.message; }
+    }
+
+    function saveSettings() {
+      state.workerName = document.getElementById('setting-worker-input').value.trim() || '山田 太郎';
+      state.gasUrl = document.getElementById('setting-gas-url-input').value.trim();
+      localStorage.setItem('inspection_worker', state.workerName);
+      localStorage.setItem('inspection_gas_url', state.gasUrl);
+      updateWorkerHeader();
+      closeSettingsModal();
+      showToast('設定を保存しました');
+    }
+
+    function openWorkerModal() { document.getElementById('modal-worker').classList.remove('hidden'); }
+    function closeWorkerModal() { document.getElementById('modal-worker').classList.add('hidden'); }
+    function saveWorkerQuick() {
+      const name = document.getElementById('worker-quick-input').value.trim();
+      if (!name) return;
+      state.workerName = name;
+      localStorage.setItem('inspection_worker', name);
+      updateWorkerHeader();
+      closeWorkerModal();
+      showToast('作業者名を変更しました');
+    }
+
+    function updatePendingBadge() {
+      const btn = document.getElementById('btn-pending-queue');
+      const badge = document.getElementById('pending-count-badge');
+      if (state.pendingQueue.length > 0) {
+        btn.classList.remove('hidden');
+        badge.textContent = state.pendingQueue.length;
+      } else {
+        btn.classList.add('hidden');
+      }
+    }
+
+    function openPendingQueueModal() {
+      if (state.pendingQueue.length === 0) return;
+      if (confirm(`${state.pendingQueue.length} 件の未送信データがあります。今すぐ再送しますか？`)) {
+        processPendingQueueSilently();
+      }
+    }
+  </script>
+</body>
+</html>
