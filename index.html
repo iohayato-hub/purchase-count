@@ -40,16 +40,12 @@
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen flex flex-col font-sans antialiased overflow-x-hidden">
 
-  <!-- ========================================================
-       ネットワーク状態・オフライン安心インジケータ (課題B対策)
-       ======================================================== -->
+  <!-- ネットワーク状態・オフライン安心インジケータ -->
   <div id="offline-banner" class="hidden bg-amber-500 text-slate-950 px-3 py-1.5 text-center text-xs font-bold flex items-center justify-center gap-1.5 shadow-md z-40">
     <span>⚠️ 電波が不安定なため、データを一時保存しました（後から再送可能）</span>
   </div>
 
-  <!-- ========================================================
-       TOP APP BAR (ヘッダー・白色基調)
-       ======================================================== -->
+  <!-- TOP APP BAR -->
   <header class="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-3.5 py-2.5 flex items-center justify-between shadow-sm">
     <div class="flex items-center gap-2">
       <div id="btn-header-back" onclick="onHeaderBackClick()" class="hidden p-1.5 rounded-lg bg-slate-100 text-slate-700 hover:text-slate-900 cursor-pointer active:scale-95">
@@ -95,9 +91,7 @@
     </div>
   </header>
 
-  <!-- ========================================================
-       メインビュー切り替えコンテナ
-       ======================================================== -->
+  <!-- メインビュー -->
   <main class="flex-1 flex flex-col justify-between overflow-hidden">
     
     <!-- VIEW 1: PL入力画面 -->
@@ -129,7 +123,7 @@
               <span>⟳ PL反映</span>
             </button>
             <button type="button" onclick="confirmPurgeAllPL()" id="btn-card-pl-purge" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-800 text-[10px] font-bold rounded-lg flex items-center gap-1 active:scale-95 transition-all" title="すべてのPLデータを完全削除します">
-              <span>🗑️ PLデータ全削除</span>
+              <span>🗑️ PLデータ完全削除</span>
             </button>
           </div>
         </div>
@@ -222,7 +216,6 @@
           <span>作業責任者: <strong id="confirm-worker-name" class="text-slate-900">-</strong></span>
           <span id="confirm-total-items-badge">全 0 品目</span>
         </div>
-        <!-- 課題D対策: 二重送信ブロック用スピナー対応ボタン -->
         <button id="btn-final-submit" onclick="submitInspectionData()" class="w-full py-4 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white font-black text-base rounded-2xl shadow-md flex items-center justify-center gap-2 transition-all">
           <span>検品結果を送信して完了する</span>
         </button>
@@ -244,11 +237,16 @@
         <button onclick="closeDiscrepancyModal()" class="text-slate-400 hover:text-slate-700 text-lg p-1">✕</button>
       </div>
 
-      <!-- どの商品に対する差異か一目でわかる固定ヘッダー -->
-      <div class="py-2.5 px-3 bg-slate-50 rounded-xl border border-slate-200 mt-3 text-xs">
+      <!-- 改善要求③: 一番上の予定数が表示されている部分で商品名2(カラー)とサイズも必ず表示 -->
+      <div class="py-2.5 px-3 bg-slate-50 rounded-xl border border-slate-200 mt-3 text-xs space-y-1">
         <div class="text-[11px] text-slate-500 font-mono" id="disc-modal-code"></div>
         <div class="text-sm font-bold text-slate-900 truncate" id="disc-modal-title"></div>
-        <div class="text-xs text-slate-600 flex items-center gap-3 mt-1">
+        <div class="text-xs font-bold text-slate-700 flex items-center gap-2">
+          <span>色: <strong id="disc-modal-color" class="text-slate-900">-</strong></span>
+          <span>·</span>
+          <span>サイズ: <strong id="disc-modal-size" class="text-amber-800 text-sm">-</strong></span>
+        </div>
+        <div class="text-xs text-slate-600 pt-1 border-t border-slate-200">
           <span>予定数量: <strong class="text-amber-700 font-mono text-sm" id="disc-modal-plan-qty">0</strong> 点</span>
         </div>
       </div>
@@ -278,7 +276,7 @@
     </div>
   </div>
 
-  <!-- MODAL: 商品マスタ検索 ＆ 未登録商品のその場新規追加モーダル (課題A対策) -->
+  <!-- MODAL: 商品マスタ検索 ＆ 未登録商品のその場新規追加モーダル -->
   <div id="modal-search-master" class="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 hidden">
     <div class="bg-white border border-blue-300 rounded-3xl p-4 max-w-md w-full shadow-2xl max-h-[88vh] flex flex-col">
       <div class="flex items-center justify-between pb-2 border-b border-slate-200 mb-2">
@@ -293,7 +291,6 @@
         <input type="text" id="master-search-input" oninput="filterMasterSearch(this.value)" placeholder="品名、商品コード、サイズで絞り込み..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
       </div>
 
-      <!-- 課題A対策: ヒットしない場合のその場新規手入力ブロック -->
       <div class="p-2.5 bg-blue-50/70 rounded-xl border border-blue-200 mb-2 space-y-2">
         <div class="text-[11px] font-bold text-blue-900">⚠️ マスタにない新商品の場合はこちらから直接作成</div>
         <div class="grid grid-cols-2 gap-1.5">
@@ -312,7 +309,7 @@
     </div>
   </div>
 
-  <!-- MODAL: PL取り込み ＆ 列解説ガイド付き -->
+  <!-- MODAL: PL取り込みガイド -->
   <div id="modal-importer" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 hidden">
     <div class="bg-white border border-slate-200 rounded-3xl p-5 max-w-lg w-full shadow-2xl max-h-[90vh] overflow-y-auto">
       <div class="flex items-center justify-between pb-2 border-b border-slate-200 mb-3">
@@ -323,7 +320,6 @@
         <button onclick="closeImporterModal()" class="text-slate-400 text-sm">✕</button>
       </div>
 
-      <!-- 作業シンプル化のための列説明ガイド -->
       <div class="p-3 bg-sky-50 border border-sky-200 rounded-2xl mb-3 text-xs text-sky-900 space-y-1">
         <div class="font-bold flex items-center gap-1">
           <span>💡</span>
@@ -393,7 +389,7 @@
 
   <div id="toast" class="fixed top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-xl pointer-events-none transition-all duration-300 opacity-0 -translate-y-2"></div>
 
-  <!-- JAVASCRIPT APPLICATION LOGIC -->
+  <!-- JAVASCRIPT -->
   <script>
     let masterList = [];
     let plItemsAll = [];
@@ -413,14 +409,12 @@
       isOnline: navigator.onLine
     };
 
-    // 初期化および自動サイレント同期 (課題E対策)
     document.addEventListener('DOMContentLoaded', async () => {
       updateWorkerHeader();
       loadLocalMaster();
       updatePendingBadge();
       setupNetworkListeners();
 
-      // 起動時にバックグラウンドでマスタをサイレント自動同期
       if (state.gasUrl) {
         await fetchMasterFromGas(true);
         await refreshPLDataFromGas(true);
@@ -536,6 +530,7 @@
       }
     }
 
+    // 改善要求①: アプリのPL完全削除ボタンの修正（action=purgeAllPL を呼び出し）
     async function confirmPurgeAllPL() {
       if (!state.gasUrl) {
         alert('GAS Web App URLが未設定です。「⚙️ 設定」からURLを入力してください。');
@@ -543,7 +538,7 @@
         return;
       }
 
-      if (!confirm('【警告】PLデータの全削除\n\n取り込んだすべてのPLデータを完全に削除します。\n\n本当に実行しますか？')) return;
+      if (!confirm('【警告】PLデータの完全削除\n\n取り込んだすべてのPLデータ（未カウント・カウント済み含む）を完全に削除します。\n\n本当に実行しますか？')) return;
       if (!confirm('【最終確認】本当によろしいですか？\n\nこの操作は元に戻せません。')) return;
 
       const btnP = document.getElementById('btn-card-pl-purge');
@@ -555,15 +550,17 @@
         const json = await res.json();
         if (json.status === 'success') {
           playBeep('success');
-          alert('すべてのPLデータを削除しました。');
+          alert('すべてのPLデータを完全に削除しました。');
           plProgress = [];
           plItemsAll = [];
           renderPLDashboard();
+        } else {
+          throw new Error(json.message || '削除に失敗しました');
         }
       } catch (err) {
         alert('通信エラー: ' + err.message);
       } finally {
-        if (btnP) btnP.innerHTML = '<span>🗑️ PLデータ全削除</span>';
+        if (btnP) btnP.innerHTML = '<span>🗑️ PLデータ完全削除</span>';
       }
     }
 
@@ -921,6 +918,8 @@
 
       document.getElementById('disc-modal-code').textContent = it.itemCode;
       document.getElementById('disc-modal-title').textContent = it.jpDesign;
+      document.getElementById('disc-modal-color').textContent = it.jpColor || '設定なし';
+      document.getElementById('disc-modal-size').textContent = it.jpSize || 'FREE';
       document.getElementById('disc-modal-plan-qty').textContent = it.planQty;
 
       if (Array.isArray(it.discrepancies) && it.discrepancies.length > 0) {
@@ -964,7 +963,7 @@
       updateDiscrepancyCalculations();
     }
 
-    // 要望対応: サイズ違い・商品違いを選択した瞬間に商品検索を即座に立ち上げる
+    // 改善要求①: サイズ違い・商品違いを選択した瞬間に必ず商品検索モーダルを強制起動する
     function onDiscrepancyReasonChange(rIdx, newReason) {
       const row = state.activeDiscrepancies[rIdx];
       if (!row) return;
@@ -1108,7 +1107,6 @@
       renderInspectionCards();
     }
 
-    // 課題A対策: 商品マスタにない新商品をその場で登録・紐づけする関数
     function registerAndSelectCustomItem() {
       const code = document.getElementById('new-item-code-input').value.trim();
       const name = document.getElementById('new-item-name-input').value.trim();
@@ -1149,7 +1147,7 @@
       document.getElementById('modal-search-master').classList.add('hidden');
     }
 
-    // 検索時も必ず商品名・カラー・サイズを明確に表示
+    // 商品検索一覧でも必ず商品名2(カラー)とサイズを表示
     function filterMasterSearch(query) {
       const q = (query || '').toLowerCase().trim();
       const container = document.getElementById('master-search-results');
@@ -1225,7 +1223,6 @@
       });
     }
 
-    // 課題D対策: 送信ボタンの物理的二重クリック完全ブロック（disabled = true）
     async function submitInspectionData() {
       const btn = document.getElementById('btn-final-submit');
       if (btn.disabled) return;
