@@ -36,21 +36,25 @@
   <main class="flex-1 flex flex-col p-4 max-w-md mx-auto w-full justify-between overflow-y-auto">
 
     <!-- ==========================================
-         STEP 1: PL選択画面 ＆ テンキー入力
+         STEP 1: PL選択画面 ＆ 進捗色分け一覧
          ========================================== -->
     <div id="step-pl_select" class="flex-1 flex flex-col justify-between space-y-4">
       <div>
-        <!-- 改善①・②を呼び出すボタンメニューバー -->
+        <!-- メニューボタン（進捗確認・取込PLデータ確認） -->
         <div class="grid grid-cols-2 gap-2 mb-3">
           <button onclick="openProgressModal()" class="py-2.5 px-3 bg-white border border-slate-300 hover:border-sky-500 rounded-2xl text-xs font-bold text-sky-800 flex items-center justify-center gap-1.5 shadow-sm active:scale-95">
             📊 作業進捗を確認
           </button>
           <button onclick="openImporterViewerModal()" class="py-2.5 px-3 bg-white border border-slate-300 hover:border-indigo-500 rounded-2xl text-xs font-bold text-indigo-800 flex items-center justify-center gap-1.5 shadow-sm active:scale-95">
-            📂 PL取込データ確認
+            📂 取込PLデータ一覧
           </button>
         </div>
 
-        <h2 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">📦 未検品PL一覧</h2>
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-xs font-bold text-slate-700 uppercase tracking-wider">📦 取込済みPL一覧（進捗ステータス）</h2>
+          <span id="pl-count-badge" class="text-[10px] font-bold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">全 0 件</span>
+        </div>
+        <!-- 完了したものは緑色・未検品は白で一目でわかるPL一覧グリッド -->
         <div id="pl-list-container" class="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1"></div>
       </div>
 
@@ -153,7 +157,7 @@
     </div>
 
     <!-- ==========================================
-         STEP 4: 商品検索・選択画面
+         STEP 4: 商品検索・選択画面 (サイズ違い・商品違い共通)
          ========================================== -->
     <div id="step-master_search" class="hidden flex-1 flex flex-col space-y-3">
       <div class="bg-white border border-blue-200 rounded-3xl p-4 shadow-sm flex-1 flex flex-col">
@@ -172,7 +176,7 @@
     <div id="step-sub_qty" class="hidden flex-1 flex flex-col justify-between space-y-4">
       <div class="bg-white border border-purple-300 rounded-3xl p-5 shadow-sm space-y-4">
         <div class="text-center">
-          <span class="px-2.5 py-1 bg-purple-100 text-purple-800 rounded-lg text-xs font-bold" id="sub-qty-reason-label">サイズ違い</span>
+          <span class="px-2.5 py-1 bg-purple-100 text-purple-800 rounded-lg text-xs font-bold" id="sub-qty-reason-label">サイズ違い / 商品違い</span>
           <h2 class="text-xl font-black text-slate-900 mt-2" id="sub-qty-item-name">商品名</h2>
           <p class="text-xs font-mono text-slate-500 mt-0.5" id="sub-qty-item-code">CODE</p>
         </div>
@@ -251,22 +255,18 @@
 
 
   <!-- ==========================================
-       MODAL 2: PL取込データを確認するモーダル
+       MODAL 2: 取込PLデータを確認するモーダル
        ========================================== -->
   <div id="modal-importer-viewer" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 hidden">
     <div class="bg-white border border-slate-200 rounded-3xl p-5 max-w-sm w-full shadow-2xl space-y-3 flex flex-col max-h-[85vh]">
       <div class="flex items-center justify-between border-b border-slate-200 pb-2">
-        <h3 class="text-xs font-black text-slate-900">📂 PL取込データ・ガイド</h3>
+        <h3 class="text-xs font-black text-slate-900">📂 取込済みPLデータ一覧</h3>
         <button onclick="closeImporterViewerModal()" class="text-slate-400 text-sm font-bold">✕</button>
       </div>
-      <div class="text-[11px] text-slate-600 space-y-2">
-        <p class="font-bold text-slate-800">💡 Googleスプレッドシート連携</p>
-        <p>メキシコから届いたExcel/CSVデータを、スプレッドシートの「<strong>PL取込</strong>」シートにそのまま貼り付けてください。</p>
-        <div class="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900">
-          ⚠️ <strong>改善③（一括リセットボタン）</strong>をご利用いただくと、すべてのPL取込データや検品履歴を一旦すべてクリアしてリセットできます。
-        </div>
+      <div id="modal-importer-list" class="flex-1 overflow-y-auto space-y-2 pr-1 text-xs max-h-60">
+        <div class="text-center py-4 text-slate-400">データを読込中...</div>
       </div>
-      
+
       <!-- 改善③: 2度の警告付き全データリセットボタン -->
       <div class="pt-2 border-t border-slate-100">
         <button onclick="triggerPurgeAllDataWarning1()" class="w-full py-3 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 font-black text-xs rounded-2xl active:scale-95 shadow-sm">
@@ -376,20 +376,26 @@
       } catch (e) { if (!isSilent) showToast('PL反映エラー'); }
     }
 
+    // フロントエンド上で進捗状況（完了したら緑色に変える）を反映したPL一覧を描画
     function renderPLList() {
       const container = document.getElementById('pl-list-container');
+      const badge = document.getElementById('pl-count-badge');
       container.innerHTML = '';
+      badge.textContent = `全 ${plProgress.length} 件`;
+
       if (plProgress.length === 0) {
         container.innerHTML = '<div class="col-span-2 text-center py-4 text-xs text-slate-400">PLデータがありません</div>';
         return;
       }
+
       plProgress.forEach(p => {
         const btn = document.createElement('button');
         btn.onclick = () => selectPL(p.plNo);
-        btn.className = `p-3 rounded-2xl border text-left transition-all active:scale-95 ${p.isCompleted ? 'bg-slate-100 border-slate-200 opacity-60' : 'bg-white border-slate-300 hover:border-emerald-500 shadow-sm'}`;
+        // 完了済みは緑色、未検品は白で視覚的に区別
+        btn.className = `p-3 rounded-2xl border text-left transition-all active:scale-95 ${p.isCompleted ? 'bg-emerald-50 border-emerald-300 shadow-sm' : 'bg-white border-slate-300 hover:border-emerald-500 shadow-sm'}`;
         btn.innerHTML = `
-          <div class="flex items-center justify-between"><span class="font-mono text-xs font-black">PL ${p.plNo}</span>${p.isCompleted ? '<span class="text-[9px] text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded font-bold">✓ 済</span>' : '<span class="text-[9px] text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded font-bold">未検品</span>'}</div>
-          <div class="text-[11px] text-slate-600 mt-1">${p.totalLines}品目 / 計${p.totalPlanQty}点</div>
+          <div class="flex items-center justify-between"><span class="font-mono text-xs font-black ${p.isCompleted ? 'text-emerald-800' : 'text-slate-900'}">PL ${p.plNo}</span>${p.isCompleted ? '<span class="text-[9px] text-emerald-700 bg-emerald-200 px-1.5 py-0.5 rounded font-bold">✓ 検品済</span>' : '<span class="text-[9px] text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded font-bold">未検品</span>'}</div>
+          <div class="text-[11px] ${p.isCompleted ? 'text-emerald-700 font-medium' : 'text-slate-600'} mt-1">${p.totalLines}品目 / 計${p.totalPlanQty}点</div>
         `;
         container.appendChild(btn);
       });
@@ -523,6 +529,7 @@
         it.discrepancies = [{ reason: '数量過不足', qty: it.actualQty, targetItemCode: '', targetItemName: '', targetSize: '', note: '' }];
         proceedNextItem();
       } else {
+        // 「サイズ違い」または「商品違い」を選んだ場合はマスタ検索画面（STEP 4）へ進み、その後に数量入力を行う
         goToStep('master_search');
         filterMaster('');
       }
@@ -552,6 +559,7 @@
       state.subQtyKeypadBuffer = '';
       updateSubQtyDisplay();
       
+      // サイズ違い・商品違いのどちらであっても、選択した後に数量入力画面（STEP 4.5）へ確実に遷移する
       document.getElementById('sub-qty-reason-label').textContent = state.selectedDiscrepancyType;
       document.getElementById('sub-qty-item-name').textContent = m.jpDesign;
       document.getElementById('sub-qty-item-code').textContent = `${m.itemCode} (${m.jpSize || 'FREE'})`;
@@ -672,7 +680,7 @@
       content.innerHTML = '<div class="text-center py-4 text-slate-400">進捗状況を集計中...</div>';
 
       if (!state.gasUrl) {
-        content.innerHTML = '<div class="text-center py-4 text-rose-600 font-bold">GAS URLが未設定です（設定から入力してください）</div>';
+        content.innerHTML = '<div class="text-center py-4 text-rose-600 font-bold">GAS URLが未設定です</div>';
         return;
       }
 
@@ -699,29 +707,67 @@
                   <span class="text-[10px] text-slate-500 block">${p.totalLines}品目 / 計${p.totalPlanQty}点</span>
                 </div>
                 <div>
-                  ${p.isCompleted ? `<span class="text-[10px] text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded font-bold">✓ 済 (${p.inspectorName || '担当'})</span>` : '<span class="text-[10px] text-sky-700 bg-sky-100 px-2 py-0.5 rounded font-bold">未検品</span>'}
+                  ${p.isCompleted ? `<span class="text-[10px] text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded font-bold">✓ 済</span>` : '<span class="text-[10px] text-sky-700 bg-sky-100 px-2 py-0.5 rounded font-bold">未検品</span>'}
                 </div>
               </div>
             `;
           });
           html += '</div>';
           content.innerHTML = html;
-        } else {
-          content.innerHTML = '<div class="text-center py-4 text-rose-600">データの取得に失敗しました</div>';
         }
       } catch (e) {
-        content.innerHTML = '<div class="text-center py-4 text-rose-600">通信エラー: ' + e.message + '</div>';
+        content.innerHTML = '<div class="text-center py-4 text-rose-600">通信エラー</div>';
       }
     }
     function closeProgressModal() { document.getElementById('modal-progress').classList.add('hidden'); }
 
-    // 改善②: PL取込データ確認モーダル
-    function openImporterViewerModal() { document.getElementById('modal-importer-viewer').classList.remove('hidden'); }
+    // 改善②: 取込PLデータ確認モーダル
+    async function openImporterViewerModal() {
+      const modal = document.getElementById('modal-importer-viewer');
+      const listContainer = document.getElementById('modal-importer-list');
+      modal.classList.remove('hidden');
+      listContainer.innerHTML = '<div class="text-center py-4 text-slate-400">取込データを読込中...</div>';
+
+      if (!state.gasUrl) {
+        listContainer.innerHTML = '<div class="text-center py-4 text-rose-600 font-bold">GAS URLが未設定です</div>';
+        return;
+      }
+
+      try {
+        const res = await fetch(`${state.gasUrl}?action=getPLList`);
+        const json = await res.json();
+        if (json.status === 'success' && Array.isArray(json.data)) {
+          const list = json.data;
+          if (list.length === 0) {
+            listContainer.innerHTML = '<div class="text-center py-4 text-slate-400">取込済みのPLデータがありません</div>';
+            return;
+          }
+          let html = '<div class="space-y-1.5">';
+          list.forEach(p => {
+            html += `
+              <div class="p-2.5 rounded-xl border bg-slate-50 border-slate-200 flex items-center justify-between">
+                <div>
+                  <span class="font-mono font-bold text-slate-800">PL番号: ${p.plNo}</span>
+                  <span class="text-[10px] text-slate-500 block">品目数: ${p.totalLines}行 / 予定総数: ${p.totalPlanQty}点</span>
+                </div>
+                <span class="text-[10px] ${p.isCompleted ? 'text-emerald-700 bg-emerald-100' : 'text-sky-700 bg-sky-100'} px-2 py-0.5 rounded font-bold">
+                  ${p.isCompleted ? '検品完了' : '未検品'}
+                </span>
+              </div>
+            `;
+          });
+          html += '</div>';
+          listContainer.innerHTML = html;
+        }
+      } catch (e) {
+        listContainer.innerHTML = '<div class="text-center py-4 text-rose-600">データ取得エラー</div>';
+      }
+    }
     function closeImporterViewerModal() { document.getElementById('modal-importer-viewer').classList.add('hidden'); }
 
-    // 改善③: 2度の警告付き全データリセットボタンのロジック
+    // 改善③: 2度の警告付き全データリセットボタン
     function triggerPurgeAllDataWarning1() {
-      const firstCheck = confirm('【⚠️ 警告 1/2】\n\n本当にすべてのPL取込データ、仕入カウント履歴、差異確認シートのデータを完全に削除してリセットしますか？\nこの操作は元に戻せません。');
+      const firstCheck = confirm('【⚠️ 警告 1/2】\n\n本当にすべてのPL取込データや検品履歴を完全に削除してリセットしますか？\nこの操作は元に戻せません。');
       if (!firstCheck) return;
 
       setTimeout(() => {
@@ -734,10 +780,19 @@
 
     async function executePurgeAllData() {
       showToast('全データを消去中...');
-      // ※全クリアを行うAPIがバックエンドにある場合はここでフェッチ、あるいはスプレッドシートのメニューからクリアを実行してください
-      alert('【削除完了】\nスプレッドシート側の各シート（PL取込・仕入カウント等）を手動またはメニューのクリア機能で初期化してください。');
-      closeImporterViewerModal();
-      refreshData();
+      try {
+        const res = await fetch(`${state.gasUrl}?action=purgeAllPL`);
+        const json = await res.json();
+        if (json.status === 'success') {
+          showToast('全データをリセットしました');
+          closeImporterViewerModal();
+          refreshData(true);
+        } else {
+          alert('リセット失敗: ' + json.message);
+        }
+      } catch (e) {
+        alert('通信エラー: ' + e.message);
+      }
     }
 
     function showToast(msg) {
