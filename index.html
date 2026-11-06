@@ -8,19 +8,29 @@
   <style>
     body { -webkit-tap-highlight-color: transparent; }
     .pb-safe { padding-bottom: env(safe-area-inset-bottom, 1rem); }
+    /* 横スクロールバーのカスタマイズ */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
 </head>
 <body class="bg-slate-100 text-slate-800 font-sans min-h-screen flex flex-col select-none">
 
-  <!-- ヘッダー -->
+  <!-- ヘッダー（設定・更新ボタンを右側に集約） -->
   <header class="bg-slate-900 text-white px-4 py-3 shadow-md flex items-center justify-between shrink-0">
     <div class="flex items-center gap-2">
       <span class="text-xl">📦</span>
       <h1 class="text-sm font-black tracking-wider">仕入カウント確認アプリ</h1>
     </div>
-    <div class="flex items-center gap-1.5">
+    <div class="flex items-center gap-2">
       <button onclick="openPLListModal()" class="px-2.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold active:scale-95 flex items-center gap-1 shadow">
         <span>📂 取込PL一覧</span>
+      </button>
+      <!-- 移動した「マスタ更新」「PL取込」ボタン -->
+      <button onclick="fetchMasterFromGas(false)" class="p-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs active:scale-95 shadow" title="商品マスタ更新">
+        🔄マスタ
+      </button>
+      <button onclick="refreshPLDataFromGas(false)" class="p-1.5 rounded-xl bg-sky-700 hover:bg-sky-600 text-white text-xs active:scale-95 shadow" title="PLデータ取込">
+        📥取込
       </button>
       <button onclick="openSettingsModal()" class="p-1.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white border border-slate-700 active:scale-95" title="設定">
         ⚙️
@@ -34,26 +44,22 @@
     <!-- VIEW 1: PL入力画面（メイン） -->
     <div id="view-pl-entry" class="flex-1 flex flex-col justify-between p-4 pb-safe overflow-y-auto">
       <div class="space-y-3">
-        <div class="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-sm space-y-2">
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-bold text-slate-700">📌 マスタ・データ同期</span>
-            <span id="card-master-count" class="text-[11px] text-emerald-700 font-mono font-bold">マスタ読込中...</span>
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <button onclick="fetchMasterFromGas(false)" class="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow active:scale-95 transition-all flex items-center justify-center gap-1">
-              <span>⟳ 商品マスタ更新</span>
-            </button>
-            <button onclick="refreshPLDataFromGas(false)" class="py-2.5 px-3 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold shadow active:scale-95 transition-all flex items-center justify-center gap-1">
-              <span>⟳ PLデータ取込</span>
-            </button>
-          </div>
+        <!-- マスタ連携状況カード -->
+        <div class="bg-white border border-slate-200 rounded-2xl px-4 py-3 shadow-sm flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-700">📌 商品マスタ状況</span>
+          <span id="card-master-count" class="text-xs text-emerald-700 font-mono font-bold">マスタ未読込</span>
         </div>
 
-        <div class="flex items-center justify-between px-1">
-          <span class="text-xs font-bold text-slate-600">本日の進捗サマリー</span>
-          <button onclick="openPLListModal()" class="text-xs text-sky-600 font-bold hover:underline">全リスト表示 ➔</button>
+        <!-- 本日の進捗サマリー（横スクロール式 1列） -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between px-1">
+            <span class="text-xs font-bold text-slate-600">本日の進捗サマリー（横スクロール）</span>
+            <button onclick="openPLListModal()" class="text-xs text-sky-600 font-bold hover:underline">全リスト表示 ➔</button>
+          </div>
+          <div id="pl-dashboard-scroll" class="flex gap-2.5 overflow-x-auto no-scrollbar py-1 px-0.5">
+            <div class="text-center py-3 px-6 text-xs text-slate-400 bg-white rounded-xl border border-slate-200 shrink-0">PLデータ未取込</div>
+          </div>
         </div>
-        <div id="pl-dashboard-grid" class="grid grid-cols-3 gap-2"></div>
       </div>
 
       <!-- テンキー入力エリア -->
@@ -91,7 +97,7 @@
       </div>
     </div>
 
-    <!-- VIEW 2: 検品画面（全項目タップ必須化 ＆ 実数入力対応） -->
+    <!-- VIEW 2: 検品画面 -->
     <div id="view-inspecting" class="flex-1 flex flex-col justify-between overflow-hidden hidden">
       <div class="px-4 py-2.5 bg-white border-b border-slate-200 flex items-center justify-between text-xs shadow-sm">
         <div>
@@ -136,18 +142,22 @@
 
   </main>
 
-  <!-- 取込済みPLデータ一覧モーダル（全削除ボタン付き） -->
+  <!-- 取込済みPLデータ一覧モーダル（未検品絞り込み・全削除ボタン付き） -->
   <div id="modal-pl-list" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
       <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
         <h3 class="font-bold text-sm flex items-center gap-2"><span>📂</span> 取込済みPLデータ一覧</h3>
         <button onclick="closePLListModal()" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
       </div>
-      <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
-        <span class="text-xs text-slate-600 font-bold">バックエンドから同期されたPLリスト</span>
-        <div class="flex items-center gap-2">
-          <button onclick="refreshPLDataFromGas(true)" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-xl shadow active:scale-95">⟳ リスト更新</button>
-          <button onclick="purgeAllPLData()" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow active:scale-95">🗑️ 全PLデータ削除</button>
+      <div class="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
+        <!-- 未検品のみ絞り込みトグル -->
+        <div class="flex items-center gap-1.5 bg-slate-200 p-1 rounded-xl">
+          <button id="filter-all-btn" onclick="setPLFilter('all')" class="px-3 py-1 rounded-lg text-xs font-bold bg-white text-slate-900 shadow-sm transition-all">すべて</button>
+          <button id="filter-uncounted-btn" onclick="setPLFilter('uncounted')" class="px-3 py-1 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900 transition-all">未検品のみ</button>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <button onclick="refreshPLDataFromGas(true)" class="px-2.5 py-1.5 bg-sky-600 text-white text-xs font-bold rounded-xl shadow active:scale-95">⟳ 更新</button>
+          <button onclick="purgeAllPLData()" class="px-2.5 py-1.5 bg-rose-600 text-white text-xs font-bold rounded-xl shadow active:scale-95">🗑️ 全削除</button>
         </div>
       </div>
       <div id="pl-list-modal-body" class="p-4 overflow-y-auto flex-1 space-y-2.5"></div>
@@ -193,11 +203,11 @@
     </div>
   </div>
 
-  <!-- 商品検索モーダル（スペース区切りAND検索対応） -->
+  <!-- 商品検索モーダル（スペースAND検索 ＆ 最大15件表示対応） -->
   <div id="modal-item-search" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
       <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
-        <h3 class="font-bold text-sm flex items-center gap-2"><span>🔍</span> 混入・別商品の検索（スペースAND検索）</h3>
+        <h3 class="font-bold text-sm flex items-center gap-2"><span>🔍</span> 混入・別商品の検索（最大15件表示）</h3>
         <button onclick="closeItemSearchModal()" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
       </div>
       <div class="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
@@ -237,13 +247,15 @@
       currentPlItems: [],
       inspectionResults: {},
       activeDiscIndex: null,
-      tempDiscData: null
+      tempDiscData: null,
+      plFilterMode: 'all' // 'all' or 'uncounted'
     };
 
     window.addEventListener('DOMContentLoaded', () => {
       document.getElementById('settings-gas-url').value = state.gasUrl;
+      // 起動時の自動取込は行わず、設定URLがある場合のみマスター件数等を確認
       if (state.gasUrl) {
-        fetchAllData();
+        fetchMasterFromGas(true);
       } else {
         openSettingsModal();
       }
@@ -273,7 +285,7 @@
       state.gasUrl = document.getElementById('settings-gas-url').value.trim();
       localStorage.setItem('gas_url', state.gasUrl);
       closeSettingsModal();
-      fetchAllData();
+      fetchMasterFromGas(true);
     }
 
     function openPLListModal() {
@@ -282,19 +294,28 @@
     }
     function closePLListModal() { document.getElementById('modal-pl-list').classList.add('hidden'); }
 
-    async function fetchAllData() {
-      if (!state.gasUrl) return;
-      await fetchMasterFromGas(true);
-      await refreshPLDataFromGas(true);
+    function setPLFilter(mode) {
+      state.plFilterMode = mode;
+      const btnAll = document.getElementById('filter-all-btn');
+      const btnUncounted = document.getElementById('filter-uncounted-btn');
+      if (mode === 'all') {
+        btnAll.className = 'px-3 py-1 rounded-lg text-xs font-bold bg-white text-slate-900 shadow-sm transition-all';
+        btnUncounted.className = 'px-3 py-1 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900 transition-all';
+      } else {
+        btnUncounted.className = 'px-3 py-1 rounded-lg text-xs font-bold bg-white text-slate-900 shadow-sm transition-all';
+        btnAll.className = 'px-3 py-1 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900 transition-all';
+      }
+      renderPLModalList();
     }
 
     async function fetchMasterFromGas(silent) {
+      if (!state.gasUrl) return;
       try {
         const res = await fetch(`${state.gasUrl}?action=getMaster`);
         const json = await res.json();
         if (json.status === 'success') {
           state.masterList = json.data || [];
-          document.getElementById('card-master-count').innerText = `マスタ ${state.masterList.length}件連携中`;
+          document.getElementById('card-master-count').innerText = `商品マスタ ${state.masterList.length}件連携中`;
           if (!silent) alert(`商品マスタを更新しました（${state.masterList.length}件）`);
         }
       } catch (err) {
@@ -303,12 +324,13 @@
     }
 
     async function refreshPLDataFromGas(silent) {
+      if (!state.gasUrl) { alert('設定画面からGAS URLを入力してください'); openSettingsModal(); return; }
       try {
         const res = await fetch(`${state.gasUrl}?action=refreshPLData`);
         const json = await res.json();
         if (json.status === 'success') {
           state.plList = json.plList || json.data || [];
-          renderPLDashboard();
+          renderPLDashboardScroll();
           if (!document.getElementById('modal-pl-list').classList.contains('hidden')) {
             renderPLModalList();
           }
@@ -321,18 +343,16 @@
       }
     }
 
-    // 全PLデータ削除機能
     async function purgeAllPLData() {
-      if (!confirm('本当にすべての取込済みPLデータを削除しますか？\n（次の仕入用にデータをリセットします）')) {
-        return;
-      }
+      if (!confirm('本当にすべての取込済みPLデータを削除しますか？\n（次の仕入用にデータをリセットします）')) return;
       try {
         const res = await fetch(`${state.gasUrl}?action=purgeAllPL`);
         const json = await res.json();
         if (json.status === 'success') {
           alert('すべてのPLデータを削除・リセットしました。');
+          state.plList = [];
+          renderPLDashboardScroll();
           closePLListModal();
-          refreshPLDataFromGas(true);
         } else {
           alert('削除エラー: ' + (json.message || '不明なエラー'));
         }
@@ -341,10 +361,11 @@
       }
     }
 
-    function renderPLDashboard() {
-      const grid = document.getElementById('pl-dashboard-grid');
+    // 本日の進捗サマリー（横スクロール式 1列）
+    function renderPLDashboardScroll() {
+      const container = document.getElementById('pl-dashboard-scroll');
       if (!state.plList || state.plList.length === 0) {
-        grid.innerHTML = '<div class="col-span-3 text-center py-3 text-xs text-slate-400 bg-white rounded-xl border border-slate-200">PLデータ未取込</div>';
+        container.innerHTML = '<div class="text-center py-3 px-6 text-xs text-slate-400 bg-white rounded-xl border border-slate-200 shrink-0">PLデータ未取込（取込ボタンを押してください）</div>';
         return;
       }
       let html = '';
@@ -353,26 +374,31 @@
           ? '<span class="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded">検品済</span>'
           : '<span class="text-[10px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.5 rounded">未検品</span>';
         html += `
-          <button onclick="selectPlNo('${pl.plNo}')" class="p-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-left shadow-sm transition-all active:scale-95 flex flex-col justify-between">
+          <button onclick="selectPlNo('${pl.plNo}')" class="p-3 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-left shadow-sm transition-all active:scale-95 flex flex-col justify-between shrink-0 w-36">
             <div class="flex items-center justify-between w-full">
               <span class="font-mono font-black text-slate-900 text-sm">PL:${pl.plNo}</span>
               ${badge}
             </div>
-            <div class="text-[11px] text-slate-500 mt-1">${pl.totalLines}品目 / ${pl.totalPlanQty}個</div>
+            <div class="text-[11px] text-slate-500 mt-1.5">${pl.totalLines}品目 / ${pl.totalPlanQty}個</div>
           </button>
         `;
       });
-      grid.innerHTML = html;
+      container.innerHTML = html;
     }
 
     function renderPLModalList() {
       const body = document.getElementById('pl-list-modal-body');
-      if (!state.plList || state.plList.length === 0) {
-        body.innerHTML = '<div class="text-center py-8 text-xs text-slate-400">取込済みのPLデータがありません</div>';
+      let targetList = state.plList || [];
+      if (state.plFilterMode === 'uncounted') {
+        targetList = targetList.filter(pl => !pl.isCompleted);
+      }
+
+      if (targetList.length === 0) {
+        body.innerHTML = '<div class="text-center py-8 text-xs text-slate-400">該当するPLデータがありません</div>';
         return;
       }
       let html = '';
-      state.plList.forEach(pl => {
+      targetList.forEach(pl => {
         const badge = pl.isCompleted ? '<span class="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-bold text-xs">検品済</span>' : '<span class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-bold text-xs">未検品</span>';
         html += `
           <div class="p-3.5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between shadow-sm">
@@ -595,17 +621,18 @@
       document.getElementById('modal-item-search').classList.add('hidden');
     }
 
+    // 商品検索の候補を最大15件に拡張
     function filterMasterList(keyword) {
       const tokens = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
       if (tokens.length === 0) {
-        renderMasterSearchResults(state.masterList);
+        renderMasterSearchResults(state.masterList.slice(0, 15));
         return;
       }
       const filtered = state.masterList.filter(m => {
         const textTarget = `${m.itemCode} ${m.jpDesign} ${m.mexDesign} ${m.jpColor} ${m.mexColor} ${m.jpSize} ${m.mexSize}`.toLowerCase();
         return tokens.every(token => textTarget.includes(token));
       });
-      renderMasterSearchResults(filtered);
+      renderMasterSearchResults(filtered.slice(0, 15));
     }
 
     function renderMasterSearchResults(list) {
@@ -696,7 +723,20 @@
 
     function backToInspectionScreen() { switchView('view-inspecting'); }
 
+    // 再検品時の二重警告チェック付き送信関数
     async function submitInspectionData() {
+      const targetPl = state.plList.find(p => String(p.plNo) === String(state.activePlNo));
+      const isAlreadyCompleted = targetPl && targetPl.isCompleted;
+
+      // すでに検品済みのPLである場合、二重警告（2回）を表示
+      if (isAlreadyCompleted) {
+        const firstWarn = confirm(`⚠️ 【警告 1/2】\nPL番号「${state.activePlNo}」は本日はすでにカウント入力済み（検品済）です。\n\n再度上書き送信しますが、本当に間違いありませんか？`);
+        if (!firstWarn) return;
+
+        const secondWarn = confirm(`🚨 【警告 2/2・最終確認】\n本当に上書きしてよろしいですか？\nこの操作により既存のカウントデータが更新されます。`);
+        if (!secondWarn) return;
+      }
+
       const inspectorName = document.getElementById('inspector-name-input').value.trim() || '未記入';
       const payload = {
         action: 'submitInspection',
