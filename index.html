@@ -19,7 +19,6 @@
       <h1 class="text-sm font-black tracking-wider">仕入カウント確認アプリ</h1>
     </div>
     <div class="flex items-center gap-1.5">
-      <!-- 改善②③: 取込済みPL一覧をいつでも確認できるモーダルボタン -->
       <button onclick="openPLListModal()" class="px-2.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold active:scale-95 flex items-center gap-1 shadow">
         <span>📂 取込PL一覧</span>
       </button>
@@ -35,7 +34,6 @@
     <!-- VIEW 1: PL入力画面（メイン） -->
     <div id="view-pl-entry" class="flex-1 flex flex-col justify-between p-4 pb-safe overflow-y-auto">
       <div class="space-y-3">
-        <!-- 改善①: 商品マスタ更新とPLデータ取込のボタンを設置 -->
         <div class="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-sm space-y-2">
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-slate-700">📌 マスタ・データ同期</span>
@@ -51,7 +49,6 @@
           </div>
         </div>
 
-        <!-- 改善③: メイン画面にはPL番号入力の邪魔にならないミニ進捗グリッドのみ配置 -->
         <div class="flex items-center justify-between px-1">
           <span class="text-xs font-bold text-slate-600">本日の進捗サマリー</span>
           <button onclick="openPLListModal()" class="text-xs text-sky-600 font-bold hover:underline">全リスト表示 ➔</button>
@@ -94,7 +91,7 @@
       </div>
     </div>
 
-    <!-- VIEW 2: 検品画面（改善④: 商品名・カラー・サイズを必ず大きく表示） -->
+    <!-- VIEW 2: 検品画面（商品名・カラー・サイズを必ず表示） -->
     <div id="view-inspecting" class="flex-1 flex flex-col justify-between overflow-hidden hidden">
       <div class="px-4 py-2.5 bg-white border-b border-slate-200 flex items-center justify-between text-xs shadow-sm">
         <div>
@@ -139,7 +136,7 @@
 
   </main>
 
-  <!-- 改善②: 取り込まれたPLデータをリスト化して表示する専用モーダル -->
+  <!-- 取込済みPLデータ一覧モーダル -->
   <div id="modal-pl-list" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
       <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
@@ -150,11 +147,50 @@
         <span class="text-xs text-slate-600 font-bold">バックエンドから同期されたPLリスト</span>
         <button onclick="refreshPLDataFromGas(true)" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-xl shadow active:scale-95">⟳ リスト更新</button>
       </div>
-      <div id="pl-list-modal-body" class="p-4 overflow-y-auto flex-1 space-y-2.5">
-        <!-- 動的リスト挿入 -->
-      </div>
+      <div id="pl-list-modal-body" class="p-4 overflow-y-auto flex-1 space-y-2.5"></div>
       <div class="p-3 bg-white border-t border-slate-200 flex justify-end">
         <button onclick="closePLListModal()" class="px-5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs rounded-xl">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 差異詳細入力モーダル -->
+  <div id="modal-discrepancy" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white w-full max-w-md rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+      <div class="p-4 bg-amber-600 text-white flex items-center justify-between">
+        <h3 class="font-bold text-sm">⚠️ 差異・例外項目の詳細登録</h3>
+        <button onclick="closeDiscrepancyModal()" class="text-amber-200 hover:text-white text-lg font-bold">✕</button>
+      </div>
+      <div class="p-4 overflow-y-auto space-y-4 flex-1">
+        <div>
+          <label class="text-xs font-bold text-slate-700 block mb-1">差異の理由を選択:</label>
+          <select id="disc-reason-select" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold bg-white">
+            <option value="数量過不足">数量過不足 (超過/不足)</option>
+            <option value="商品違い">商品違い (異なる商品が混入)</option>
+            <option value="サイズ違い">サイズ違い</option>
+            <option value="カラー違い">カラー違い</option>
+            <option value="欠品・破損">欠品・破損</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="text-xs font-bold text-slate-700 block mb-1">実数 または 数量:</label>
+          <input type="number" id="disc-qty-input" class="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono text-sm font-bold" value="0">
+        </div>
+
+        <div>
+          <label class="text-xs font-bold text-slate-700 block mb-1">対象商品コード (商品違い/混入の場合):</label>
+          <input type="text" id="disc-target-code" placeholder="例: 610722211" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono">
+        </div>
+
+        <div>
+          <label class="text-xs font-bold text-slate-700 block mb-1">備考メモ:</label>
+          <input type="text" id="disc-note-input" placeholder="例: カートン破損あり など" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs">
+        </div>
+      </div>
+      <div class="p-3 bg-white border-t border-slate-200 flex justify-end gap-2">
+        <button onclick="closeDiscrepancyModal()" class="px-4 py-2 bg-slate-200 text-slate-800 font-bold text-xs rounded-xl">キャンセル</button>
+        <button onclick="saveDiscrepancyEntry()" class="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl">差異を登録する</button>
       </div>
     </div>
   </div>
@@ -184,7 +220,8 @@
       plList: [],
       masterList: [],
       currentPlItems: [],
-      inspectionResults: {}
+      inspectionResults: {},
+      activeDiscIndex: null
     };
 
     window.addEventListener('DOMContentLoaded', () => {
@@ -246,7 +283,7 @@
         if (json.status === 'success') {
           state.plList = json.data || [];
           renderPLDashboard();
-          if (document.getElementById('modal-pl-list').classList.contains('hidden') === false) {
+          if (!document.getElementById('modal-pl-list').classList.contains('hidden')) {
             renderPLModalList();
           }
           if (!silent) alert(`PLデータを反映しました（${state.plList.length}件）`);
@@ -280,7 +317,6 @@
       grid.innerHTML = html;
     }
 
-    // 改善②③: モーダル内でのリスト描画
     function renderPLModalList() {
       const body = document.getElementById('pl-list-modal-body');
       if (state.plList.length === 0) {
@@ -306,7 +342,7 @@
       body.innerHTML = html;
     }
 
-    // テンキー操作
+    // テンキー
     function pressPlKeypad(n) {
       if (state.plKeypadVal.length >= 5) return;
       state.plKeypadVal += n;
@@ -353,19 +389,20 @@
 
     function backToPlEntry() { switchView('view-pl-entry'); }
 
-    // 改善④: 全画面において商品名・カラー・サイズを必ず大きく表示するカード描画
+    // 検品カード描画
     function renderInspectionCards() {
       const container = document.getElementById('inspection-cards-container');
       let html = '';
       state.currentPlItems.forEach((item, idx) => {
         const res = state.inspectionResults[idx];
         const isEx = res.hasException;
+        const discSummary = (res.discrepancies || []).map(d => `${d.reason}: ${d.qty}点`).join(' / ');
+
         html += `
           <div class="bg-white border-2 ${isEx ? 'border-amber-400 bg-amber-50/20' : 'border-slate-200'} rounded-2xl p-4 shadow-sm space-y-3">
             <div class="flex items-start justify-between gap-2">
               <div>
                 <span class="px-2 py-0.5 bg-slate-100 text-slate-700 rounded font-mono text-[11px] font-bold">${item.itemCode || 'コードなし'}</span>
-                <!-- 改善④: 日本品名・カラー・サイズを必ず大きく目立つように表示 -->
                 <h4 class="text-base font-black text-slate-900 mt-1">${item.jpDesign || item.mexDesign}</h4>
                 <div class="text-xs font-bold text-slate-600 mt-1">
                   カラー: <span class="text-slate-900 font-black">${item.jpColor || item.mexColor}</span> ｜ 
@@ -378,23 +415,21 @@
               </div>
             </div>
 
-            <!-- カウント・差異入力ボタン -->
             <div class="flex items-center gap-2 pt-2 border-t border-slate-100">
               <button onclick="setInspectionMatch(${idx})" class="flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${!isEx ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 text-slate-700'}">
                 ✓ 予定通り一致 (${item.planQty})
               </button>
-              <button onclick="toggleException(${idx})" class="px-3 py-2.5 rounded-xl text-xs font-bold transition-all ${isEx ? 'bg-amber-600 text-white shadow' : 'bg-amber-50 text-amber-800 border border-amber-300'}">
-                ⚠️ 差異あり
+              <button onclick="openDiscrepancyModal(${idx})" class="px-3 py-2.5 rounded-xl text-xs font-bold transition-all ${isEx ? 'bg-amber-600 text-white shadow' : 'bg-amber-50 text-amber-800 border border-amber-300'}">
+                ⚠️ 差異あり ${res.discrepancies.length > 0 ? '('+res.discrepancies.length+')' : ''}
               </button>
             </div>
 
-            <!-- 差異詳細エリア -->
-            <div id="exc-panel-${idx}" class="${isEx ? '' : 'hidden'} pt-2 space-y-2">
-              <div class="flex items-center gap-2">
-                <label class="text-xs font-bold text-slate-700">実数:</label>
-                <input type="number" id="actual-input-${idx}" value="${res.actualQty}" onchange="updateActualQty(${idx}, this.value)" class="w-24 px-3 py-1.5 border border-slate-300 rounded-xl font-mono text-sm font-bold bg-white">
+            ${isEx ? `
+              <div class="p-2.5 bg-amber-100/70 border border-amber-300 rounded-xl text-xs space-y-1">
+                <div class="font-bold text-amber-900">登録された差異:</div>
+                <div class="text-amber-800 font-mono">${discSummary || '差異詳細が未登録です'}</div>
               </div>
-            </div>
+            ` : ''}
           </div>
         `;
       });
@@ -409,14 +444,40 @@
       renderInspectionCards();
     }
 
-    function toggleException(idx) {
-      state.inspectionResults[idx].hasException = !state.inspectionResults[idx].hasException;
-      renderInspectionCards();
+    // 差異モーダルを開く
+    function openDiscrepancyModal(idx) {
+      state.activeDiscIndex = idx;
+      const item = state.currentPlItems[idx];
+      document.getElementById('disc-qty-input').value = item.planQty;
+      document.getElementById('disc-target-code').value = '';
+      document.getElementById('disc-note-input').value = '';
+      document.getElementById('modal-discrepancy').classList.remove('hidden');
     }
 
-    function updateActualQty(idx, val) {
-      state.inspectionResults[idx].actualQty = Number(val) || 0;
-      checkInspectionCompletion();
+    function closeDiscrepancyModal() {
+      document.getElementById('modal-discrepancy').classList.add('hidden');
+      state.activeDiscIndex = null;
+    }
+
+    function saveDiscrepancyEntry() {
+      const idx = state.activeDiscIndex;
+      if (idx === null) return;
+      const reason = document.getElementById('disc-reason-select').value;
+      const qty = Number(document.getElementById('disc-qty-input').value) || 0;
+      const targetCode = document.getElementById('disc-target-code').value.trim();
+      const note = document.getElementById('disc-note-input').value.trim();
+
+      state.inspectionResults[idx].hasException = true;
+      state.inspectionResults[idx].actualQty = qty;
+      state.inspectionResults[idx].discrepancies.push({
+        reason: reason,
+        qty: qty,
+        targetItemCode: targetCode,
+        note: note
+      });
+
+      closeDiscrepancyModal();
+      renderInspectionCards();
     }
 
     function checkInspectionCompletion() {
@@ -431,17 +492,17 @@
       let html = '';
       state.currentPlItems.forEach((item, idx) => {
         const res = state.inspectionResults[idx];
-        // 改善④: 確認画面でも必ず商品名、カラー、サイズを表示
         html += `
-          <div class="bg-white border border-slate-200 rounded-2xl p-3 shadow-sm flex items-center justify-between text-xs">
-            <div>
+          <div class="bg-white border border-slate-200 rounded-2xl p-3 shadow-sm space-y-1 text-xs">
+            <div class="flex items-center justify-between">
               <span class="font-mono text-slate-500">${item.itemCode || 'コードなし'}</span>
-              <div class="font-black text-slate-900 text-sm mt-0.5">${item.jpDesign || item.mexDesign}</div>
-              <div class="text-slate-600 mt-0.5">カラー: <strong class="text-slate-900">${item.jpColor || item.mexColor}</strong> ｜ サイズ: <strong class="text-slate-900">${item.jpSize || item.mexSize}</strong></div>
+              <span class="font-bold ${res.hasException ? 'text-amber-600' : 'text-emerald-600'}">${res.hasException ? '⚠️ 差異あり' : '✓ 一致'}</span>
             </div>
-            <div class="text-right shrink-0 font-mono">
-              <div>予定: ${item.planQty}</div>
-              <div class="font-bold text-emerald-700">実数: ${res.actualQty}</div>
+            <div class="font-black text-slate-900 text-sm">${item.jpDesign || item.mexDesign}</div>
+            <div class="text-slate-600">カラー: <strong class="text-slate-900">${item.jpColor || item.mexColor}</strong> ｜ サイズ: <strong class="text-slate-900">${item.jpSize || item.mexSize}</strong></div>
+            <div class="flex justify-between font-mono pt-1 border-t border-slate-100 mt-1">
+              <span>予定: ${item.planQty}</span>
+              <span class="font-bold text-emerald-700">実数: ${res.actualQty}</span>
             </div>
           </div>
         `;
