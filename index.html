@@ -154,11 +154,11 @@
     </div>
   </div>
 
-  <!-- 差異詳細入力モーダル（完全修復版） -->
+  <!-- ステップ1: 差異理由選択モーダル -->
   <div id="modal-discrepancy" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-    <div class="bg-white w-full max-w-md rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in duration-200">
+    <div class="bg-white w-full max-w-md rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
       <div class="p-4 bg-amber-600 text-white flex items-center justify-between">
-        <h3 class="font-bold text-sm">⚠️ 差異・例外項目の詳細登録</h3>
+        <h3 class="font-bold text-sm">⚠️ 差異・例外項目の登録</h3>
         <button onclick="closeDiscrepancyModal()" class="text-amber-200 hover:text-white text-lg font-bold px-2">✕</button>
       </div>
       <div class="p-4 overflow-y-auto space-y-4 flex-1">
@@ -172,17 +172,10 @@
             <option value="欠品・破損">欠品・破損</option>
           </select>
         </div>
-
         <div>
-          <label class="text-xs font-bold text-slate-700 block mb-1">実際の実数・数量:</label>
+          <label class="text-xs font-bold text-slate-700 block mb-1">実数・数量:</label>
           <input type="number" id="disc-qty-input" class="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono text-sm font-bold bg-white text-slate-800" value="0">
         </div>
-
-        <div>
-          <label class="text-xs font-bold text-slate-700 block mb-1">対象商品コード (商品違い/混入の場合):</label>
-          <input type="text" id="disc-target-code" placeholder="例: 610722211" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono bg-white text-slate-800">
-        </div>
-
         <div>
           <label class="text-xs font-bold text-slate-700 block mb-1">備考メモ:</label>
           <input type="text" id="disc-note-input" placeholder="例: カートン破損あり など" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-800">
@@ -190,7 +183,26 @@
       </div>
       <div class="p-3 bg-white border-t border-slate-200 flex justify-end gap-2">
         <button onclick="closeDiscrepancyModal()" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs rounded-xl">キャンセル</button>
-        <button onclick="saveDiscrepancyEntry()" class="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl shadow">差異を登録する</button>
+        <button onclick="proceedFromDiscrepancy()" class="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl shadow">次へすすむ ➔</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ステップ2: 商品マスタからの商品検索・選択モーダル（商品違いの場合に起動） -->
+  <div id="modal-item-search" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+      <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
+        <h3 class="font-bold text-sm flex items-center gap-2"><span>🔍</span> 混入・別商品の検索・選択</h3>
+        <button onclick="closeItemSearchModal()" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
+      </div>
+      <div class="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
+        <input type="text" id="search-keyword-input" oninput="filterMasterList(this.value)" placeholder="商品コード、品名、カラー、サイズで検索..." class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white font-medium">
+      </div>
+      <div id="item-search-results" class="p-3 overflow-y-auto flex-1 space-y-2">
+        <!-- 検索結果リスト -->
+      </div>
+      <div class="p-3 bg-white border-t border-slate-200 flex justify-end">
+        <button onclick="closeItemSearchModal()" class="px-4 py-2 bg-slate-200 text-slate-800 font-bold text-xs rounded-xl">キャンセル</button>
       </div>
     </div>
   </div>
@@ -221,7 +233,8 @@
       masterList: [],
       currentPlItems: [],
       inspectionResults: {},
-      activeDiscIndex: null
+      activeDiscIndex: null,
+      tempDiscData: null
     };
 
     window.addEventListener('DOMContentLoaded', () => {
@@ -396,7 +409,11 @@
       state.currentPlItems.forEach((item, idx) => {
         const res = state.inspectionResults[idx];
         const isEx = res.hasException;
-        const discSummary = (res.discrepancies || []).map(d => `${d.reason}: ${d.qty}点`).join(' / ');
+        const discSummary = (res.discrepancies || []).map(d => {
+          let txt = `${d.reason}: ${d.qty}点`;
+          if (d.targetItemCode) txt += ` [混入商品: ${d.targetItemCode} ${d.targetItemName || ''}]`;
+          return txt;
+        }).join(' ／ ');
 
         html += `
           <div class="bg-white border-2 ${isEx ? 'border-amber-400 bg-amber-50/20' : 'border-slate-200'} rounded-2xl p-4 shadow-sm space-y-3">
@@ -427,7 +444,7 @@
 
             ${isEx ? `
               <div class="p-2.5 bg-amber-100/70 border border-amber-300 rounded-xl text-xs space-y-1">
-                <div class="font-bold text-amber-900">登録された差異:</div>
+                <div class="font-bold text-amber-900">登録された差異内容:</div>
                 <div class="text-amber-800 font-mono">${discSummary || '差異詳細が未登録です'}</div>
               </div>
             ` : ''}
@@ -445,39 +462,113 @@
       renderInspectionCards();
     }
 
-    // 差異モーダルを開く
+    // ステップ1: 差異理由モーダルを開く
     function openDiscrepancyModal(idx) {
       state.activeDiscIndex = idx;
       const item = state.currentPlItems[idx];
       document.getElementById('disc-qty-input').value = item.planQty;
-      document.getElementById('disc-target-code').value = '';
       document.getElementById('disc-note-input').value = '';
+      document.getElementById('disc-reason-select').value = '数量過不足';
       document.getElementById('modal-discrepancy').classList.remove('hidden');
     }
 
     function closeDiscrepancyModal() {
       document.getElementById('modal-discrepancy').classList.add('hidden');
-      state.activeDiscIndex = null;
     }
 
-    function saveDiscrepancyEntry() {
-      const idx = state.activeDiscIndex;
-      if (idx === null) return;
+    // 「次へ」ボタン押下時の制御（「商品違い」なら商品検索画面へ、それ以外なら直接保存）
+    function proceedFromDiscrepancy() {
       const reason = document.getElementById('disc-reason-select').value;
       const qty = Number(document.getElementById('disc-qty-input').value) || 0;
-      const targetCode = document.getElementById('disc-target-code').value.trim();
       const note = document.getElementById('disc-note-input').value.trim();
 
-      state.inspectionResults[idx].hasException = true;
-      state.inspectionResults[idx].actualQty = qty;
-      state.inspectionResults[idx].discrepancies.push({
+      state.tempDiscData = {
         reason: reason,
         qty: qty,
-        targetItemCode: targetCode,
-        note: note
-      });
+        note: note,
+        targetItemCode: '',
+        targetItemName: '',
+        targetSize: ''
+      };
 
       closeDiscrepancyModal();
+
+      if (reason === '商品違い') {
+        // 商品違いの場合は商品検索モーダルを起動
+        openItemSearchModal();
+      } else {
+        // その他の理由はそのまま確定保存
+        saveCurrentDiscrepancy();
+      }
+    }
+
+    // ステップ2: 商品検索モーダルの制御
+    function openItemSearchModal() {
+      document.getElementById('search-keyword-input').value = '';
+      renderMasterSearchResults(state.masterList);
+      document.getElementById('modal-item-search').classList.remove('hidden');
+    }
+
+    function closeItemSearchModal() {
+      document.getElementById('modal-item-search').classList.add('hidden');
+    }
+
+    function filterMasterList(keyword) {
+      const kw = keyword.toLowerCase();
+      const filtered = state.masterList.filter(m => 
+        m.itemCode.toLowerCase().includes(kw) ||
+        m.jpDesign.toLowerCase().includes(kw) ||
+        m.mexDesign.toLowerCase().includes(kw) ||
+        m.jpColor.toLowerCase().includes(kw) ||
+        m.jpSize.toLowerCase().includes(kw)
+      );
+      renderMasterSearchResults(filtered);
+    }
+
+    function renderMasterSearchResults(list) {
+      const container = document.getElementById('item-search-results');
+      if (list.length === 0) {
+        container.innerHTML = '<div class="text-center py-6 text-xs text-slate-400">該当する商品が見つかりません</div>';
+        return;
+      }
+      let html = '';
+      list.forEach(m => {
+        html += `
+          <div onclick="selectMixedItem('${m.itemCode}', '${m.jpDesign || m.mexDesign}', '${m.jpSize || m.mexSize}')" class="p-3 bg-white border border-slate-200 hover:border-emerald-500 rounded-2xl shadow-sm cursor-pointer transition-all active:scale-[0.99] flex items-center justify-between">
+            <div>
+              <span class="font-mono text-xs font-bold text-slate-500">${m.itemCode}</span>
+              <div class="font-black text-sm text-slate-900">${m.jpDesign || m.mexDesign}</div>
+              <div class="text-xs text-slate-600">カラー: <strong class="text-slate-900">${m.jpColor || m.mexColor}</strong> ｜ サイズ: <strong class="text-slate-900">${m.jpSize || m.mexSize}</strong></div>
+            </div>
+            <button class="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-xl shadow">選択 ➔</button>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+    }
+
+    // 検索モーダルで商品を選択した際の処理
+    function selectMixedItem(code, name, size) {
+      if (!state.tempDiscData) state.tempDiscData = {};
+      state.tempDiscData.targetItemCode = code;
+      state.tempDiscData.targetItemName = name;
+      state.tempDiscData.targetSize = size;
+
+      closeItemSearchModal();
+      saveCurrentDiscrepancy();
+    }
+
+    // 差異データを最終的な検品結果オブジェクトに確定保存
+    function saveCurrentDiscrepancy() {
+      const idx = state.activeDiscIndex;
+      if (idx === null || !state.tempDiscData) return;
+
+      state.inspectionResults[idx].hasException = true;
+      state.inspectionResults[idx].actualQty = state.tempDiscData.qty;
+      state.inspectionResults[idx].discrepancies.push(state.tempDiscData);
+
+      state.activeDiscIndex = null;
+      state.tempDiscData = null;
       renderInspectionCards();
     }
 
@@ -493,6 +584,13 @@
       let html = '';
       state.currentPlItems.forEach((item, idx) => {
         const res = state.inspectionResults[idx];
+        let discHtml = '';
+        if (res.hasException && res.discrepancies.length > 0) {
+          res.discrepancies.forEach(d => {
+            discHtml += `<div class="text-amber-700 font-bold mt-1">⚠️ ${d.reason}: ${d.qty}点 ${d.targetItemCode ? `(混入商品: ${d.targetItemCode} ${d.targetItemName})` : ''}</div>`;
+          });
+        }
+
         html += `
           <div class="bg-white border border-slate-200 rounded-2xl p-3 shadow-sm space-y-1 text-xs">
             <div class="flex items-center justify-between">
@@ -501,6 +599,7 @@
             </div>
             <div class="font-black text-slate-900 text-sm">${item.jpDesign || item.mexDesign}</div>
             <div class="text-slate-600">カラー: <strong class="text-slate-900">${item.jpColor || item.mexColor}</strong> ｜ サイズ: <strong class="text-slate-900">${item.jpSize || item.mexSize}</strong></div>
+            ${discHtml}
             <div class="flex justify-between font-mono pt-1 border-t border-slate-100 mt-1">
               <span>予定: ${item.planQty}</span>
               <span class="font-bold text-emerald-700">実数: ${res.actualQty}</span>
