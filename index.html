@@ -91,7 +91,7 @@
       </div>
     </div>
 
-    <!-- VIEW 2: 検品画面（商品名・カラー・サイズを必ず表示） -->
+    <!-- VIEW 2: 検品画面（①全項目タップ必須化を実装） -->
     <div id="view-inspecting" class="flex-1 flex flex-col justify-between overflow-hidden hidden">
       <div class="px-4 py-2.5 bg-white border-b border-slate-200 flex items-center justify-between text-xs shadow-sm">
         <div>
@@ -154,26 +154,28 @@
     </div>
   </div>
 
-  <!-- ステップ1: 差異理由選択モーダル -->
+  <!-- ステップ2: 差異理由3択モーダル -->
   <div id="modal-discrepancy" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="bg-white w-full max-w-md rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
       <div class="p-4 bg-amber-600 text-white flex items-center justify-between">
-        <h3 class="font-bold text-sm">⚠️ 差異・例外項目の登録</h3>
+        <h3 class="font-bold text-sm">⚠️ 差異理由の選択</h3>
         <button onclick="closeDiscrepancyModal()" class="text-amber-200 hover:text-white text-lg font-bold px-2">✕</button>
       </div>
       <div class="p-4 overflow-y-auto space-y-4 flex-1">
         <div>
-          <label class="text-xs font-bold text-slate-700 block mb-1">差異の理由・要因を選択:</label>
+          <label class="text-xs font-bold text-slate-700 block mb-1">差異理由（3択）:</label>
           <select id="disc-reason-select" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold bg-white text-slate-800">
-            <option value="数量過不足">数量過不足 (超過/不足)</option>
-            <option value="商品違い">商品違い (異なる商品が混入)</option>
-            <option value="サイズ違い">サイズ違い</option>
-            <option value="カラー違い">カラー違い</option>
-            <option value="欠品・破損">欠品・破損</option>
+            <option value="過不足">過不足 (通常の超過・不足)</option>
+            <option value="商品違い">商品違い (異なる商品の混入)</option>
+            <option value="登録なし商品">登録なし商品 (自由入力)</option>
           </select>
         </div>
+        <div id="disc-unregistered-container" class="hidden">
+          <label class="text-xs font-bold text-slate-700 block mb-1">登録なし商品名・内容 (自由入力):</label>
+          <input type="text" id="disc-unregistered-input" placeholder="例: 未登録の別カラー・商品など" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-800">
+        </div>
         <div>
-          <label class="text-xs font-bold text-slate-700 block mb-1">実数・数量:</label>
+          <label class="text-xs font-bold text-slate-700 block mb-1">実数・カウント数量:</label>
           <input type="number" id="disc-qty-input" class="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono text-sm font-bold bg-white text-slate-800" value="0">
         </div>
         <div>
@@ -188,19 +190,17 @@
     </div>
   </div>
 
-  <!-- ステップ2: 商品マスタからの商品検索・選択モーダル（商品違いの場合に起動） -->
+  <!-- ステップ3: 商品検索モーダル（スペース区切りAND検索対応） -->
   <div id="modal-item-search" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
       <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
-        <h3 class="font-bold text-sm flex items-center gap-2"><span>🔍</span> 混入・別商品の検索・選択</h3>
+        <h3 class="font-bold text-sm flex items-center gap-2"><span>🔍</span> 混入・別商品の検索（スペースAND検索）</h3>
         <button onclick="closeItemSearchModal()" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
       </div>
       <div class="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
-        <input type="text" id="search-keyword-input" oninput="filterMasterList(this.value)" placeholder="商品コード、品名、カラー、サイズで検索..." class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white font-medium">
+        <input type="text" id="search-keyword-input" oninput="filterMasterList(this.value)" placeholder="例: ROMBO BLK （スペース区切りでAND検索）" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white font-medium">
       </div>
-      <div id="item-search-results" class="p-3 overflow-y-auto flex-1 space-y-2">
-        <!-- 検索結果リスト -->
-      </div>
+      <div id="item-search-results" class="p-3 overflow-y-auto flex-1 space-y-2"></div>
       <div class="p-3 bg-white border-t border-slate-200 flex justify-end">
         <button onclick="closeItemSearchModal()" class="px-4 py-2 bg-slate-200 text-slate-800 font-bold text-xs rounded-xl">キャンセル</button>
       </div>
@@ -244,6 +244,16 @@
       } else {
         openSettingsModal();
       }
+
+      document.getElementById('disc-reason-select').addEventListener('change', function() {
+        const val = this.value;
+        const container = document.getElementById('disc-unregistered-container');
+        if (val === '登録なし商品') {
+          container.classList.remove('hidden');
+        } else {
+          container.classList.add('hidden');
+        }
+      });
     });
 
     function switchView(viewId) {
@@ -387,7 +397,16 @@
           state.currentPlItems = json.data;
           state.inspectionResults = {};
           state.currentPlItems.forEach((item, idx) => {
-            state.inspectionResults[idx] = { actualQty: item.planQty, hasException: false, discrepancies: [] };
+            state.inspectionResults[idx] = { 
+              actualQty: item.planQty, 
+              hasException: false, 
+              discrepancies: [],
+              // ① 全項目のタップ必須化のフラグ管理
+              tappedName: false,
+              tappedColor: false,
+              tappedSize: false,
+              tappedPlan: false
+            };
           });
           document.getElementById('inspect-pl-label').innerText = `PL - ${plNo}`;
           renderInspectionCards();
@@ -402,50 +421,74 @@
 
     function backToPlEntry() { switchView('view-pl-entry'); }
 
-    // 検品カード描画
+    // ① 全項目タップ必須化に対応した検品カード描画
     function renderInspectionCards() {
       const container = document.getElementById('inspection-cards-container');
       let html = '';
       state.currentPlItems.forEach((item, idx) => {
         const res = state.inspectionResults[idx];
         const isEx = res.hasException;
-        const discSummary = (res.discrepancies || []).map(d => {
+        const allTapped = res.tappedName && res.tappedColor && res.tappedSize && res.tappedPlan;
+
+        let discSummary = (res.discrepancies || []).map(d => {
           let txt = `${d.reason}: ${d.qty}点`;
-          if (d.targetItemCode) txt += ` [混入商品: ${d.targetItemCode} ${d.targetItemName || ''}]`;
+          if (d.targetItemCode) txt += ` [別商品: ${d.targetItemCode} ${d.targetItemName || ''}]`;
+          if (d.unregName) txt += ` [登録なし: ${d.unregName}]`;
           return txt;
         }).join(' ／ ');
 
+        // 合計計算 (予定数 + 差異の合計数)
+        let totalCount = res.actualQty;
+        if (res.discrepancies.length > 0) {
+          let extraSum = 0;
+          res.discrepancies.forEach(d => { extraSum += Number(d.qty) || 0; });
+          totalCount = item.planQty + extraSum;
+        }
+
         html += `
           <div class="bg-white border-2 ${isEx ? 'border-amber-400 bg-amber-50/20' : 'border-slate-200'} rounded-2xl p-4 shadow-sm space-y-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <span class="px-2 py-0.5 bg-slate-100 text-slate-700 rounded font-mono text-[11px] font-bold">${item.itemCode || 'コードなし'}</span>
-                <!-- 改善④: 商品名・カラー・サイズを必ず大きく表示 -->
-                <h4 class="text-base font-black text-slate-900 mt-1">${item.jpDesign || item.mexDesign}</h4>
-                <div class="text-xs font-bold text-slate-600 mt-1">
-                  カラー: <span class="text-slate-900 font-black">${item.jpColor || item.mexColor}</span> ｜ 
-                  サイズ: <span class="text-slate-900 font-black">${item.jpSize || item.mexSize}</span>
-                </div>
+            <div class="text-[11px] font-bold text-slate-400">品目 #${idx + 1} ｜ パレット:${item.palletNo || '-'} カートン:${item.cartonNo || '-'}</div>
+            
+            <!-- ① タップ必須の確認項目群 -->
+            <div class="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs">
+              <div onclick="tapField(${idx}, 'Name')" class="p-2 rounded-lg cursor-pointer transition-all border ${res.tappedName ? 'bg-emerald-50 border-emerald-400 text-emerald-900 font-bold' : 'bg-white border-slate-300 text-slate-700'}">
+                <span class="block text-[10px] text-slate-400">商品名 (タップ確認)</span>
+                <span>${item.jpDesign || item.mexDesign}</span> ${res.tappedName ? '✓' : ''}
               </div>
-              <div class="text-right shrink-0">
-                <span class="text-[10px] text-slate-500 block">予定数</span>
-                <span class="text-xl font-black font-mono text-slate-900">${item.planQty}</span>
+              <div onclick="tapField(${idx}, 'Color')" class="p-2 rounded-lg cursor-pointer transition-all border ${res.tappedColor ? 'bg-emerald-50 border-emerald-400 text-emerald-900 font-bold' : 'bg-white border-slate-300 text-slate-700'}">
+                <span class="block text-[10px] text-slate-400">カラー (タップ確認)</span>
+                <span>${item.jpColor || item.mexColor}</span> ${res.tappedColor ? '✓' : ''}
+              </div>
+              <div onclick="tapField(${idx}, 'Size')" class="p-2 rounded-lg cursor-pointer transition-all border ${res.tappedSize ? 'bg-emerald-50 border-emerald-400 text-emerald-900 font-bold' : 'bg-white border-slate-300 text-slate-700'}">
+                <span class="block text-[10px] text-slate-400">サイズ (タップ確認)</span>
+                <span>${item.jpSize || item.mexSize}</span> ${res.tappedSize ? '✓' : ''}
+              </div>
+              <div onclick="tapField(${idx}, 'Plan')" class="p-2 rounded-lg cursor-pointer transition-all border ${res.tappedPlan ? 'bg-emerald-50 border-emerald-400 text-emerald-900 font-bold' : 'bg-white border-slate-300 text-slate-700'}">
+                <span class="block text-[10px] text-slate-400">予定数 (タップ確認)</span>
+                <span class="font-mono font-bold">${item.planQty}個</span> ${res.tappedPlan ? '✓' : ''}
               </div>
             </div>
 
+            <!-- カウントアクションボタン（全項目タップするまで無効） -->
             <div class="flex items-center gap-2 pt-2 border-t border-slate-100">
-              <button onclick="setInspectionMatch(${idx})" class="flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${!isEx ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 text-slate-700'}">
+              <button ${!allTapped ? 'disabled' : ''} onclick="setInspectionMatch(${idx})" class="flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${!allTapped ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : (!isEx ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 text-slate-700')}">
                 ✓ 予定通り一致 (${item.planQty})
               </button>
-              <button onclick="openDiscrepancyModal(${idx})" class="px-3 py-2.5 rounded-xl text-xs font-bold transition-all ${isEx ? 'bg-amber-600 text-white shadow' : 'bg-amber-50 text-amber-800 border border-amber-300'}">
+              <button ${!allTapped ? 'disabled' : ''} onclick="openDiscrepancyModal(${idx})" class="px-3 py-2.5 rounded-xl text-xs font-bold transition-all ${!allTapped ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : (isEx ? 'bg-amber-600 text-white shadow' : 'bg-amber-50 text-amber-800 border border-amber-300')}">
                 ⚠️ 差異あり ${res.discrepancies.length > 0 ? '('+res.discrepancies.length+')' : ''}
               </button>
             </div>
+            ${!allTapped ? '<div class="text-[10px] text-rose-600 font-bold text-center">↑ 上記の4項目すべてをタップして確認してください</div>' : ''}
 
+            <!-- 改善点④: 予定数 + 別商品カウント数 ＝ 合計 のわかりやすい計算表示 -->
             ${isEx ? `
-              <div class="p-2.5 bg-amber-100/70 border border-amber-300 rounded-xl text-xs space-y-1">
-                <div class="font-bold text-amber-900">登録された差異内容:</div>
-                <div class="text-amber-800 font-mono">${discSummary || '差異詳細が未登録です'}</div>
+              <div class="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs space-y-1.5">
+                <div class="font-bold text-amber-900">📊 カウント計算結果・内訳:</div>
+                <div class="text-amber-800 font-mono">${discSummary || '詳細未登録'}</div>
+                <div class="pt-1.5 border-t border-amber-200 font-black text-amber-950 flex justify-between">
+                  <span>PL予定(${item.planQty}個) ＋ 追加・別商品カウント ＝</span>
+                  <span class="text-sm font-mono text-emerald-700">合計 ${totalCount}点</span>
+                </div>
               </div>
             ` : ''}
           </div>
@@ -455,6 +498,15 @@
       checkInspectionCompletion();
     }
 
+    // ① 各項目をタップしたときの記録関数
+    function tapField(idx, field) {
+      if (field === 'Name') state.inspectionResults[idx].tappedName = true;
+      if (field === 'Color') state.inspectionResults[idx].tappedColor = true;
+      if (field === 'Size') state.inspectionResults[idx].tappedSize = true;
+      if (field === 'Plan') state.inspectionResults[idx].tappedPlan = true;
+      renderInspectionCards();
+    }
+
     function setInspectionMatch(idx) {
       state.inspectionResults[idx].actualQty = state.currentPlItems[idx].planQty;
       state.inspectionResults[idx].hasException = false;
@@ -462,13 +514,15 @@
       renderInspectionCards();
     }
 
-    // ステップ1: 差異理由モーダルを開く
+    // ② 差異理由3択モーダルを開く
     function openDiscrepancyModal(idx) {
       state.activeDiscIndex = idx;
       const item = state.currentPlItems[idx];
       document.getElementById('disc-qty-input').value = item.planQty;
       document.getElementById('disc-note-input').value = '';
-      document.getElementById('disc-reason-select').value = '数量過不足';
+      document.getElementById('disc-unregistered-input').value = '';
+      document.getElementById('disc-reason-select').value = '過不足';
+      document.getElementById('disc-unregistered-container').classList.add('hidden');
       document.getElementById('modal-discrepancy').classList.remove('hidden');
     }
 
@@ -476,11 +530,12 @@
       document.getElementById('modal-discrepancy').classList.add('hidden');
     }
 
-    // 「次へ」ボタン押下時の制御（「商品違い」なら商品検索画面へ、それ以外なら直接保存）
+    // ② 差異理由選択に応じた次のステップへの分岐
     function proceedFromDiscrepancy() {
       const reason = document.getElementById('disc-reason-select').value;
       const qty = Number(document.getElementById('disc-qty-input').value) || 0;
       const note = document.getElementById('disc-note-input').value.trim();
+      const unregName = document.getElementById('disc-unregistered-input').value.trim();
 
       state.tempDiscData = {
         reason: reason,
@@ -488,21 +543,22 @@
         note: note,
         targetItemCode: '',
         targetItemName: '',
-        targetSize: ''
+        targetSize: '',
+        unregName: unregName
       };
 
       closeDiscrepancyModal();
 
       if (reason === '商品違い') {
-        // 商品違いの場合は商品検索モーダルを起動
+        // ③ 商品違いの場合はスペース区切りAND検索の商品選択画面へ
         openItemSearchModal();
       } else {
-        // その他の理由はそのまま確定保存
+        // 過不足、または登録なし商品の場合はそのまま保存・計算へ
         saveCurrentDiscrepancy();
       }
     }
 
-    // ステップ2: 商品検索モーダルの制御
+    // ③ スペース区切りAND検索対応の商品検索モーダル
     function openItemSearchModal() {
       document.getElementById('search-keyword-input').value = '';
       renderMasterSearchResults(state.masterList);
@@ -514,14 +570,16 @@
     }
 
     function filterMasterList(keyword) {
-      const kw = keyword.toLowerCase();
-      const filtered = state.masterList.filter(m => 
-        m.itemCode.toLowerCase().includes(kw) ||
-        m.jpDesign.toLowerCase().includes(kw) ||
-        m.mexDesign.toLowerCase().includes(kw) ||
-        m.jpColor.toLowerCase().includes(kw) ||
-        m.jpSize.toLowerCase().includes(kw)
-      );
+      const tokens = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      if (tokens.length === 0) {
+        renderMasterSearchResults(state.masterList);
+        return;
+      }
+      const filtered = state.masterList.filter(m => {
+        const textTarget = `${m.itemCode} ${m.jpDesign} ${m.mexDesign} ${m.jpColor} ${m.mexColor} ${m.jpSize} ${m.mexSize}`.toLowerCase();
+        // すべてのスペース区切りキーワードが含まれているか（AND検索）
+        return tokens.every(token => textTarget.includes(token));
+      });
       renderMasterSearchResults(filtered);
     }
 
@@ -547,7 +605,6 @@
       container.innerHTML = html;
     }
 
-    // 検索モーダルで商品を選択した際の処理
     function selectMixedItem(code, name, size) {
       if (!state.tempDiscData) state.tempDiscData = {};
       state.tempDiscData.targetItemCode = code;
@@ -558,14 +615,17 @@
       saveCurrentDiscrepancy();
     }
 
-    // 差異データを最終的な検品結果オブジェクトに確定保存
     function saveCurrentDiscrepancy() {
       const idx = state.activeDiscIndex;
       if (idx === null || !state.tempDiscData) return;
 
       state.inspectionResults[idx].hasException = true;
-      state.inspectionResults[idx].actualQty = state.tempDiscData.qty;
       state.inspectionResults[idx].discrepancies.push(state.tempDiscData);
+
+      // 実数を計算（予定数 + 追加・別商品の数量）
+      let sum = state.currentPlItems[idx].planQty;
+      state.inspectionResults[idx].discrepancies.forEach(d => { sum += (Number(d.qty) || 0); });
+      state.inspectionResults[idx].actualQty = sum;
 
       state.activeDiscIndex = null;
       state.tempDiscData = null;
@@ -587,7 +647,7 @@
         let discHtml = '';
         if (res.hasException && res.discrepancies.length > 0) {
           res.discrepancies.forEach(d => {
-            discHtml += `<div class="text-amber-700 font-bold mt-1">⚠️ ${d.reason}: ${d.qty}点 ${d.targetItemCode ? `(混入商品: ${d.targetItemCode} ${d.targetItemName})` : ''}</div>`;
+            discHtml += `<div class="text-amber-700 font-bold mt-1">⚠️ ${d.reason}: ${d.qty}点 ${d.targetItemCode ? `(別商品: ${d.targetItemCode} ${d.targetItemName})` : ''} ${d.unregName ? `(登録なし: ${d.unregName})` : ''}</div>`;
           });
         }
 
@@ -602,7 +662,7 @@
             ${discHtml}
             <div class="flex justify-between font-mono pt-1 border-t border-slate-100 mt-1">
               <span>予定: ${item.planQty}</span>
-              <span class="font-bold text-emerald-700">実数: ${res.actualQty}</span>
+              <span class="font-bold text-emerald-700">実数合計: ${res.actualQty}</span>
             </div>
           </div>
         `;
