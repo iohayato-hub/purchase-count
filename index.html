@@ -8,7 +8,6 @@
   <style>
     body { -webkit-tap-highlight-color: transparent; }
     .pb-safe { padding-bottom: env(safe-area-inset-bottom, 1rem); }
-    /* 横スクロールバーのカスタマイズ */
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
@@ -25,7 +24,6 @@
       <button onclick="openPLListModal()" class="px-2.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold active:scale-95 flex items-center gap-1 shadow">
         <span>📂 取込PL一覧</span>
       </button>
-      <!-- 移動した「マスタ更新」「PL取込」ボタン -->
       <button onclick="fetchMasterFromGas(false)" class="p-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs active:scale-95 shadow" title="商品マスタ更新">
         🔄マスタ
       </button>
@@ -57,7 +55,7 @@
             <button onclick="openPLListModal()" class="text-xs text-sky-600 font-bold hover:underline">全リスト表示 ➔</button>
           </div>
           <div id="pl-dashboard-scroll" class="flex gap-2.5 overflow-x-auto no-scrollbar py-1 px-0.5">
-            <div class="text-center py-3 px-6 text-xs text-slate-400 bg-white rounded-xl border border-slate-200 shrink-0">PLデータ未取込</div>
+            <div class="text-center py-3 px-6 text-xs text-slate-400 bg-white rounded-xl border border-slate-200 shrink-0">PLデータ未取込（「📥取込」を押してください）</div>
           </div>
         </div>
       </div>
@@ -142,15 +140,22 @@
 
   </main>
 
-  <!-- 取込済みPLデータ一覧モーダル（未検品絞り込み・全削除ボタン付き） -->
+  <!-- 取込済みPLデータ一覧モーダル（上部に予定数・カウント数合計の表示を追加） -->
   <div id="modal-pl-list" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
       <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
         <h3 class="font-bold text-sm flex items-center gap-2"><span>📂</span> 取込済みPLデータ一覧</h3>
         <button onclick="closePLListModal()" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
       </div>
+
+      <!-- 予定数合計・カウント数合計を表示するサマリーボックス -->
+      <div id="pl-list-summary-box" class="px-4 py-2.5 bg-emerald-50 border-b border-emerald-200 text-xs flex items-center justify-around font-bold text-emerald-900">
+        <div>予定総数: <span id="summary-total-plan" class="font-mono text-sm">0</span></div>
+        <div>｜</div>
+        <div>カウント総数: <span id="summary-total-actual" class="font-mono text-sm">0</span></div>
+      </div>
+
       <div class="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
-        <!-- 未検品のみ絞り込みトグル -->
         <div class="flex items-center gap-1.5 bg-slate-200 p-1 rounded-xl">
           <button id="filter-all-btn" onclick="setPLFilter('all')" class="px-3 py-1 rounded-lg text-xs font-bold bg-white text-slate-900 shadow-sm transition-all">すべて</button>
           <button id="filter-uncounted-btn" onclick="setPLFilter('uncounted')" class="px-3 py-1 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900 transition-all">未検品のみ</button>
@@ -253,7 +258,6 @@
 
     window.addEventListener('DOMContentLoaded', () => {
       document.getElementById('settings-gas-url').value = state.gasUrl;
-      // 起動時の自動取込は行わず、設定URLがある場合のみマスター件数等を確認
       if (state.gasUrl) {
         fetchMasterFromGas(true);
       } else {
@@ -365,7 +369,7 @@
     function renderPLDashboardScroll() {
       const container = document.getElementById('pl-dashboard-scroll');
       if (!state.plList || state.plList.length === 0) {
-        container.innerHTML = '<div class="text-center py-3 px-6 text-xs text-slate-400 bg-white rounded-xl border border-slate-200 shrink-0">PLデータ未取込（取込ボタンを押してください）</div>';
+        container.innerHTML = '<div class="text-center py-3 px-6 text-xs text-slate-400 bg-white rounded-xl border border-slate-200 shrink-0">PLデータ未取込（「📥取込」を押してください）</div>';
         return;
       }
       let html = '';
@@ -389,6 +393,17 @@
     function renderPLModalList() {
       const body = document.getElementById('pl-list-modal-body');
       let targetList = state.plList || [];
+      
+      // 合計数値の計算
+      let sumPlan = 0;
+      let sumActual = 0;
+      targetList.forEach(pl => {
+        sumPlan += Number(pl.totalPlanQty) || 0;
+        sumActual += Number(pl.totalActualQty !== undefined ? pl.totalActualQty : pl.totalPlanQty) || 0;
+      });
+      document.getElementById('summary-total-plan').innerText = sumPlan;
+      document.getElementById('summary-total-actual').innerText = sumActual;
+
       if (state.plFilterMode === 'uncounted') {
         targetList = targetList.filter(pl => !pl.isCompleted);
       }
@@ -728,7 +743,6 @@
       const targetPl = state.plList.find(p => String(p.plNo) === String(state.activePlNo));
       const isAlreadyCompleted = targetPl && targetPl.isCompleted;
 
-      // すでに検品済みのPLである場合、二重警告（2回）を表示
       if (isAlreadyCompleted) {
         const firstWarn = confirm(`⚠️ 【警告 1/2】\nPL番号「${state.activePlNo}」は本日はすでにカウント入力済み（検品済）です。\n\n再度上書き送信しますが、本当に間違いありませんか？`);
         if (!firstWarn) return;
@@ -744,10 +758,6 @@
         inspectorName: inspectorName,
         items: state.currentPlItems.map((item, idx) => {
           const res = state.inspectionResults[idx];
-          let extraSum = 0;
-          if (res.discrepancies) {
-            res.discrepancies.forEach(d => { extraSum += Number(d.qty) || 0; });
-          }
           return {
             itemCode: item.itemCode,
             mexDesign: item.mexDesign,
@@ -757,7 +767,7 @@
             jpColor: item.jpColor,
             jpSize: item.jpSize,
             planQty: item.planQty,
-            actualQty: Number(res.actualQty) + extraSum,
+            actualQty: Number(res.actualQty), // G列には「本来の商品の実数」を正確に送信
             hasException: res.hasException,
             discrepancies: res.discrepancies
           };
