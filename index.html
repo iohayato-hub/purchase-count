@@ -95,7 +95,7 @@
       </div>
     </div>
 
-    <!-- VIEW 2: 検品画面 -->
+    <!-- VIEW 2: 検品画面（カラー＆サイズ超大型化 ＆ ＋/－クイック増減搭載） -->
     <div id="view-inspecting" class="flex-1 flex flex-col justify-between overflow-hidden hidden">
       <div class="px-4 py-2.5 bg-white border-b border-slate-200 flex items-center justify-between text-xs shadow-sm">
         <div>
@@ -140,7 +140,7 @@
 
   </main>
 
-  <!-- 取込済みPLデータ一覧モーダル（検品済みの実カウント数＋混入数を集計するサマリー付き） -->
+  <!-- 取込済みPLデータ一覧モーダル -->
   <div id="modal-pl-list" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
       <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
@@ -148,7 +148,7 @@
         <button onclick="closePLListModal()" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
       </div>
 
-      <!-- サマリーボックス（予定総数 ＆ 検品済実カウント総数） -->
+      <!-- サマリーボックス -->
       <div class="px-4 py-2.5 bg-emerald-50 border-b border-emerald-200 text-xs flex items-center justify-around font-bold text-emerald-900">
         <div>予定総数: <span id="summary-total-plan" class="font-mono text-sm">0</span></div>
         <div>｜</div>
@@ -365,7 +365,6 @@
       }
     }
 
-    // 本日の進捗サマリー（横スクロール式 1列）
     function renderPLDashboardScroll() {
       const container = document.getElementById('pl-dashboard-scroll');
       if (!state.plList || state.plList.length === 0) {
@@ -394,12 +393,10 @@
       const body = document.getElementById('pl-list-modal-body');
       let targetList = state.plList || [];
       
-      // 合計数値の計算
       let sumPlan = 0;
       let sumActual = 0;
       targetList.forEach(pl => {
         sumPlan += Number(pl.totalPlanQty) || 0;
-        // カウント総数は「検品済」のPLのみ、実カウント数＋混入数を合算する
         if (pl.isCompleted && pl.actualTotalQty !== undefined) {
           sumActual += Number(pl.actualTotalQty) || 0;
         }
@@ -493,7 +490,7 @@
 
     function backToPlEntry() { switchView('view-pl-entry'); }
 
-    // 検品カード描画
+    // 検品カード描画（カラー・サイズを圧倒的に大きく・見やすく表示 ＆ クイック増減ボタン搭載）
     function renderInspectionCards() {
       const container = document.getElementById('inspection-cards-container');
       let html = '';
@@ -518,40 +515,58 @@
 
         html += `
           <div class="bg-white border-2 ${isEx ? 'border-amber-400 bg-amber-50/20' : 'border-slate-200'} rounded-2xl p-4 shadow-sm space-y-3">
-            <div class="text-[11px] font-bold text-slate-400">品目 #${idx + 1} ｜ パレット:${item.palletNo || '-'} カートン:${item.cartonNo || '-'}</div>
+            <div class="text-xs font-bold text-slate-500 flex justify-between items-center">
+              <span>品目 #${idx + 1} ｜ パレット:${item.palletNo || '-'} / カートン:${item.cartonNo || '-'}</span>
+              <span class="font-mono text-slate-400 font-bold">${item.itemCode}</span>
+            </div>
             
-            <div class="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs">
-              <div onclick="tapField(${idx}, 'Name')" class="p-2 rounded-lg cursor-pointer transition-all border ${res.tappedName ? 'bg-emerald-50 border-emerald-400 text-emerald-900 font-bold' : 'bg-white border-slate-300 text-slate-700'}">
+            <!-- 【視認性最重視】商品名・カラー・サイズを大きく強調表示 -->
+            <div class="space-y-2">
+              <div onclick="tapField(${idx}, 'Name')" class="p-2.5 rounded-xl cursor-pointer transition-all border ${res.tappedName ? 'bg-emerald-50 border-emerald-400 text-emerald-950 font-bold' : 'bg-white border-slate-300 text-slate-800'}">
                 <span class="block text-[10px] text-slate-400">商品名 (タップ確認)</span>
-                <span>${item.jpDesign || item.mexDesign}</span> ${res.tappedName ? '✓' : ''}
+                <span class="text-sm font-black">${item.jpDesign || item.mexDesign}</span> ${res.tappedName ? '✓' : ''}
               </div>
-              <div onclick="tapField(${idx}, 'Color')" class="p-2 rounded-lg cursor-pointer transition-all border ${res.tappedColor ? 'bg-emerald-50 border-emerald-400 text-emerald-900 font-bold' : 'bg-white border-slate-300 text-slate-700'}">
-                <span class="block text-[10px] text-slate-400">カラー (タップ確認)</span>
-                <span>${item.jpColor || item.mexColor}</span> ${res.tappedColor ? '✓' : ''}
+
+              <div class="grid grid-cols-2 gap-2">
+                <!-- カラー表記を大きく強調 -->
+                <div onclick="tapField(${idx}, 'Color')" class="p-2.5 rounded-xl cursor-pointer transition-all border ${res.tappedColor ? 'bg-emerald-50 border-emerald-400 text-emerald-950 font-bold' : 'bg-amber-50/60 border-amber-300 text-slate-900'}">
+                  <span class="block text-[10px] text-amber-800 font-bold">🎨 カラー (タップ確認)</span>
+                  <span class="text-base font-black tracking-wide">${item.jpColor || item.mexColor}</span> ${res.tappedColor ? '✓' : ''}
+                </div>
+                <!-- サイズ表記を圧倒的に大きく強調（見間違い防止） -->
+                <div onclick="tapField(${idx}, 'Size')" class="p-2.5 rounded-xl cursor-pointer transition-all border ${res.tappedSize ? 'bg-emerald-50 border-emerald-400 text-emerald-950 font-bold' : 'bg-rose-50/80 border-rose-300 text-slate-900'}">
+                  <span class="block text-[10px] text-rose-800 font-bold">📏 サイズ (タップ確認)</span>
+                  <span class="text-xl font-black tracking-wider text-rose-700">${item.jpSize || item.mexSize}</span> ${res.tappedSize ? '✓' : ''}
+                </div>
               </div>
-              <div onclick="tapField(${idx}, 'Size')" class="p-2 rounded-lg cursor-pointer transition-all border ${res.tappedSize ? 'bg-emerald-50 border-emerald-400 text-emerald-900 font-bold' : 'bg-white border-slate-300 text-slate-700'}">
-                <span class="block text-[10px] text-slate-400">サイズ (タップ確認)</span>
-                <span>${item.jpSize || item.mexSize}</span> ${res.tappedSize ? '✓' : ''}
-              </div>
-              <div onclick="tapField(${idx}, 'Plan')" class="p-2 rounded-lg cursor-pointer transition-all border ${res.tappedPlan ? 'bg-emerald-50 border-emerald-400 text-emerald-900 font-bold' : 'bg-white border-slate-300 text-slate-700'}">
+
+              <div onclick="tapField(${idx}, 'Plan')" class="p-2.5 rounded-xl cursor-pointer transition-all border ${res.tappedPlan ? 'bg-emerald-50 border-emerald-400 text-emerald-950 font-bold' : 'bg-white border-slate-300 text-slate-700'}">
                 <span class="block text-[10px] text-slate-400">PL予定数 (タップ確認)</span>
-                <span class="font-mono font-bold">${item.planQty}個</span> ${res.tappedPlan ? '✓' : ''}
+                <span class="font-mono text-sm font-black">${item.planQty}個</span> ${res.tappedPlan ? '✓' : ''}
               </div>
             </div>
 
-            <div class="flex items-center justify-between bg-emerald-50/50 p-3 rounded-xl border border-emerald-200">
-              <div>
-                <span class="text-xs font-bold text-slate-800 block">本来の商品のカウント実数:</span>
-                <span class="text-[10px] text-slate-500">PL予定(${item.planQty}個)に対する実際の数量</span>
+            <!-- カウント実数入力 ＋ クイック増減ボタン（＋/－） -->
+            <div class="bg-emerald-50/60 p-3 rounded-2xl border border-emerald-200 space-y-2">
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="text-xs font-black text-slate-900 block">本来の商品のカウント実数:</span>
+                  <span class="text-[10px] text-slate-500">予定(${item.planQty}個)に対する実際の数</span>
+                </div>
+                <!-- クイック増減ボタン（＋/－） -->
+                <div class="flex items-center gap-1">
+                  <button ${!allTapped ? 'disabled' : ''} onclick="adjustQty(${idx}, -1)" class="w-10 h-10 bg-white border border-emerald-400 rounded-xl font-black text-lg text-emerald-800 active:scale-95 shadow-sm flex items-center justify-center">-</button>
+                  <button ${!allTapped ? 'disabled' : ''} onclick="adjustQty(${idx}, 1)" class="w-10 h-10 bg-emerald-600 rounded-xl font-black text-lg text-white active:scale-95 shadow-sm flex items-center justify-center">+</button>
+                </div>
               </div>
-              <input type="number" ${!allTapped ? 'disabled' : ''} value="${res.actualQty}" onchange="updateActualQty(${idx}, this.value)" class="w-24 px-3 py-2 border-2 border-emerald-500 rounded-xl font-mono text-base font-black bg-white text-emerald-900 text-center shadow-sm">
+              <input type="number" ${!allTapped ? 'disabled' : ''} id="actual-input-${idx}" value="${res.actualQty}" onchange="updateActualQty(${idx}, this.value)" class="w-full px-3 py-2.5 border-2 border-emerald-500 rounded-xl font-mono text-xl font-black bg-white text-emerald-950 text-center shadow-sm">
             </div>
 
-            <div class="flex items-center gap-2 pt-2 border-t border-slate-100">
-              <button ${!allTapped ? 'disabled' : ''} onclick="setInspectionMatch(${idx})" class="flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${!allTapped ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : (!isEx ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 text-slate-700')}">
+            <div class="flex items-center gap-2 pt-1">
+              <button ${!allTapped ? 'disabled' : ''} onclick="setInspectionMatch(${idx})" class="flex-1 py-3 rounded-xl text-xs font-bold transition-all ${!allTapped ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : (!isEx ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 text-slate-700')}">
                 ✓ 予定通り一致 (${item.planQty})
               </button>
-              <button ${!allTapped ? 'disabled' : ''} onclick="openDiscrepancyModal(${idx})" class="px-3 py-2.5 rounded-xl text-xs font-bold transition-all ${!allTapped ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : (isEx ? 'bg-amber-600 text-white shadow' : 'bg-amber-50 text-amber-800 border border-amber-300')}">
+              <button ${!allTapped ? 'disabled' : ''} onclick="openDiscrepancyModal(${idx})" class="px-4 py-3 rounded-xl text-xs font-bold transition-all ${!allTapped ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : (isEx ? 'bg-amber-600 text-white shadow' : 'bg-amber-50 text-amber-800 border border-amber-300')}">
                 ⚠️ 差異あり ${res.discrepancies.length > 0 ? '('+res.discrepancies.length+')' : ''}
               </button>
             </div>
@@ -584,6 +599,15 @@
 
     function updateActualQty(idx, val) {
       state.inspectionResults[idx].actualQty = Number(val) || 0;
+      renderInspectionCards();
+    }
+
+    // クイック増減ボタン（＋/－）の処理
+    function adjustQty(idx, delta) {
+      let current = Number(state.inspectionResults[idx].actualQty) || 0;
+      current += delta;
+      if (current < 0) current = 0;
+      state.inspectionResults[idx].actualQty = current;
       renderInspectionCards();
     }
 
@@ -643,7 +667,6 @@
       document.getElementById('modal-item-search').classList.add('hidden');
     }
 
-    // 商品検索の候補を最大15件に拡張
     function filterMasterList(keyword) {
       const tokens = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
       if (tokens.length === 0) {
@@ -745,7 +768,6 @@
 
     function backToInspectionScreen() { switchView('view-inspecting'); }
 
-    // 再検品時の二重警告チェック付き送信関数
     async function submitInspectionData() {
       const targetPl = state.plList.find(p => String(p.plNo) === String(state.activePlNo));
       const isAlreadyCompleted = targetPl && targetPl.isCompleted;
