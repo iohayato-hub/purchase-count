@@ -140,7 +140,7 @@
 
   </main>
 
-  <!-- 取込済みPLデータ一覧モーダル（上部に予定数・カウント数合計の表示を追加） -->
+  <!-- 取込済みPLデータ一覧モーダル（検品済みの実カウント数＋混入数を集計するサマリー付き） -->
   <div id="modal-pl-list" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
       <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
@@ -148,11 +148,11 @@
         <button onclick="closePLListModal()" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
       </div>
 
-      <!-- 予定数合計・カウント数合計を表示するサマリーボックス -->
-      <div id="pl-list-summary-box" class="px-4 py-2.5 bg-emerald-50 border-b border-emerald-200 text-xs flex items-center justify-around font-bold text-emerald-900">
+      <!-- サマリーボックス（予定総数 ＆ 検品済実カウント総数） -->
+      <div class="px-4 py-2.5 bg-emerald-50 border-b border-emerald-200 text-xs flex items-center justify-around font-bold text-emerald-900">
         <div>予定総数: <span id="summary-total-plan" class="font-mono text-sm">0</span></div>
         <div>｜</div>
-        <div>カウント総数: <span id="summary-total-actual" class="font-mono text-sm">0</span></div>
+        <div>カウント総数(検品済): <span id="summary-total-actual" class="font-mono text-sm text-emerald-700 font-black">0</span></div>
       </div>
 
       <div class="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
@@ -399,7 +399,10 @@
       let sumActual = 0;
       targetList.forEach(pl => {
         sumPlan += Number(pl.totalPlanQty) || 0;
-        sumActual += Number(pl.totalActualQty !== undefined ? pl.totalActualQty : pl.totalPlanQty) || 0;
+        // カウント総数は「検品済」のPLのみ、実カウント数＋混入数を合算する
+        if (pl.isCompleted && pl.actualTotalQty !== undefined) {
+          sumActual += Number(pl.actualTotalQty) || 0;
+        }
       });
       document.getElementById('summary-total-plan').innerText = sumPlan;
       document.getElementById('summary-total-actual').innerText = sumActual;
@@ -415,11 +418,15 @@
       let html = '';
       targetList.forEach(pl => {
         const badge = pl.isCompleted ? '<span class="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-bold text-xs">検品済</span>' : '<span class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-bold text-xs">未検品</span>';
+        let detailText = `品目数: ${pl.totalLines}行 / 予定総数: ${pl.totalPlanQty}個`;
+        if (pl.isCompleted && pl.actualTotalQty !== undefined) {
+          detailText += ` <span class="text-emerald-700 font-bold">(実カウント: ${pl.actualTotalQty}個)</span>`;
+        }
         html += `
           <div class="p-3.5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between shadow-sm">
             <div>
               <div class="font-black text-base text-slate-900">PL番号: ${pl.plNo}</div>
-              <div class="text-xs text-slate-500 mt-0.5">品目数: ${pl.totalLines}行 / 予定総数: ${pl.totalPlanQty}個</div>
+              <div class="text-xs text-slate-500 mt-0.5">${detailText}</div>
             </div>
             <div class="flex items-center gap-2">
               ${badge}
@@ -767,7 +774,7 @@
             jpColor: item.jpColor,
             jpSize: item.jpSize,
             planQty: item.planQty,
-            actualQty: Number(res.actualQty), // G列には「本来の商品の実数」を正確に送信
+            actualQty: Number(res.actualQty),
             hasException: res.hasException,
             discrepancies: res.discrepancies
           };
